@@ -4,7 +4,7 @@ from typing import Any
 
 import requests
 
-from .config import Settings, require
+from .config import Settings, normalize_notion_id, require
 from .utils.notion_blocks import markdown_to_blocks
 
 
@@ -42,16 +42,30 @@ class NotionClient:
         )
 
     def update_database(self, database_id: str, properties: dict[str, Any]) -> dict[str, Any]:
+        database_id = normalize_notion_id(database_id)
         return self.request("PATCH", f"/databases/{database_id}", {"properties": properties})
+
+    def update_data_source(self, data_source_id: str, properties: dict[str, Any]) -> dict[str, Any]:
+        data_source_id = normalize_notion_id(data_source_id)
+        return self.request("PATCH", f"/data_sources/{data_source_id}", {"properties": properties})
+
+    def database_data_source_id(self, database_id: str) -> str:
+        database_id = normalize_notion_id(database_id)
+        data = self.request("GET", f"/databases/{database_id}")
+        data_sources = data.get("data_sources", [])
+        if not data_sources:
+            return database_id
+        return data_sources[0]["id"]
 
     def create_page(
         self,
-        database_id: str,
+        data_source_id: str,
         properties: dict[str, Any],
         markdown: str | None = None,
     ) -> dict[str, Any]:
+        data_source_id = normalize_notion_id(data_source_id)
         payload: dict[str, Any] = {
-            "parent": {"database_id": database_id},
+            "parent": {"data_source_id": data_source_id},
             "properties": properties,
         }
         if markdown:
@@ -59,9 +73,11 @@ class NotionClient:
         return self.request("POST", "/pages", payload)
 
     def update_page(self, page_id: str, properties: dict[str, Any]) -> dict[str, Any]:
+        page_id = normalize_notion_id(page_id)
         return self.request("PATCH", f"/pages/{page_id}", {"properties": properties})
 
     def append_markdown(self, page_id: str, markdown: str) -> dict[str, Any]:
+        page_id = normalize_notion_id(page_id)
         blocks = markdown_to_blocks(markdown)
         result: dict[str, Any] = {}
         for offset in range(0, len(blocks), 100):
@@ -73,9 +89,11 @@ class NotionClient:
         return result
 
     def retrieve_page(self, page_id: str) -> dict[str, Any]:
+        page_id = normalize_notion_id(page_id)
         return self.request("GET", f"/pages/{page_id}")
 
     def retrieve_block_children(self, block_id: str) -> list[dict[str, Any]]:
+        block_id = normalize_notion_id(block_id)
         results: list[dict[str, Any]] = []
         cursor = None
         while True:
@@ -86,8 +104,9 @@ class NotionClient:
                 return results
             cursor = data.get("next_cursor")
 
-    def query_database(self, database_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        return self.request("POST", f"/databases/{database_id}/query", payload or {})
+    def query_database(self, data_source_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        data_source_id = normalize_notion_id(data_source_id)
+        return self.request("POST", f"/data_sources/{data_source_id}/query", payload or {})
 
     def page_text(self, page_id: str) -> str:
         blocks = self.retrieve_block_children(page_id)

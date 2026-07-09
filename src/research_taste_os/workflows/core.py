@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .. import prompts
-from ..config import Settings, append_env_values, require
+from ..config import Settings, append_env_values, normalize_notion_id, require
 from ..llm_client import LLMClient
 from ..notion_client import (
     NotionClient,
@@ -18,22 +18,24 @@ from ..notion_client import (
     title_prop,
     url_prop,
 )
-from ..schema import BASE_SCHEMAS, relation_patches
+from ..schema import BASE_SCHEMAS, data_source_properties, relation_patches
 from ..utils.pdf_text import read_text_source
 from ..utils.scoring import SCORE_FIELDS, decision_for_scores, total_score
 
 
 def setup_notion() -> dict[str, str]:
     settings = Settings()
-    parent_id = require(settings.notion_parent_page_id, "NOTION_PARENT_PAGE_ID")
+    parent_id = normalize_notion_id(require(settings.notion_parent_page_id, "NOTION_PARENT_PAGE_ID"))
     notion = NotionClient(settings)
     ids: dict[str, str] = {}
     for key, (title, properties) in BASE_SCHEMAS.items():
-        db = notion.create_database(parent_id, title, properties)
-        ids[key] = db["id"]
-        print(f"Created {title}: {db['id']}")
+        db = notion.create_database(parent_id, title, {})
+        data_source_id = notion.database_data_source_id(db["id"])
+        notion.update_data_source(data_source_id, data_source_properties(properties))
+        ids[key] = data_source_id
+        print(f"Created {title}: {data_source_id}")
     for key, properties in relation_patches(ids).items():
-        notion.update_database(ids[key], properties)
+        notion.update_data_source(ids[key], properties)
     append_env_values(
         {
             "PAPER_BANK_DB_ID": ids["paper_bank"],

@@ -40,7 +40,17 @@ def multi_select(options: list[str]) -> dict[str, Any]:
 
 
 def relation(database_id: str) -> dict[str, Any]:
-    return {"relation": {"database_id": database_id, "type": "single_property", "single_property": {}}}
+    return {"relation": {"data_source_id": database_id, "type": "single_property", "single_property": {}}}
+
+
+def data_source_properties(properties: dict[str, Any]) -> dict[str, Any]:
+    title_names = [name for name, definition in properties.items() if "title" in definition]
+    if not title_names:
+        return properties
+    title_name = title_names[0]
+    converted = {"Name": {"name": title_name}}
+    converted.update({name: definition for name, definition in properties.items() if name != title_name})
+    return converted
 
 
 def formula(expression: str) -> dict[str, Any]:
