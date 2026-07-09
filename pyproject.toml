@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "research-taste-os"
+version = "0.1.0"
+description = "Notion-first Accounting PhD research taste workflow."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "openai>=1.40.0",
+  "python-dotenv>=1.0.1",
+  "requests>=2.32.0",
+]
+
+[project.scripts]
+research-os = "research_taste_os.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
