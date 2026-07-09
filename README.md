@@ -63,6 +63,50 @@ The smoke test creates one sample Paper, Taste Memo, Idea, Proposal, Critique, a
 
 ## Daily Workflow
 
+## No-Manual Mode
+
+Fastest path: give the system one title plus an abstract or text file, and let it run the whole pipeline.
+
+```bash
+research-os run-paper \
+  --title "Does Disclosure Discipline Managers?" \
+  --authors "Author A; Author B" \
+  --journal WP \
+  --year 2026 \
+  --field Disclosure \
+  --abstract "Paste abstract here"
+```
+
+For longer notes:
+
+```bash
+research-os run-paper \
+  --title "Paper title" \
+  --journal WP \
+  --year 2026 \
+  --field Capital\ Markets \
+  --content ./paper_notes.md
+```
+
+What it does automatically:
+
+- Creates the Paper Bank entry.
+- Generates the Paper Card.
+- Creates the linked Taste Memo.
+- Generates exactly 3 idea extensions.
+- Scores all 3 ideas.
+- If any idea is `Promote`, picks the highest score and creates a Mini Proposal.
+- Runs Referee Simulation.
+- Appends an Advisor Memo.
+
+If you prefer to add papers directly inside Notion, set `Status = Inbox`, then run:
+
+```bash
+research-os process-inbox --limit 3
+```
+
+That processes up to 3 inbox papers end-to-end.
+
 Add a paper:
 
 ```bash

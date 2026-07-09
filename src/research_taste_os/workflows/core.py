@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 
 from .. import prompts
@@ -260,6 +261,83 @@ def generate_advisor_memo(args: Any) -> str:
     return markdown
 
 
+def run_paper(args: Any) -> dict[str, Any]:
+    content = read_text_source(getattr(args, "content", None)) or getattr(args, "abstract", "")
+    paper = add_paper(args)
+    paper_id = paper["id"]
+    generate_paper_card(SimpleNamespace(paper_id=paper_id, content=content))
+    memo = generate_taste_memo(SimpleNamespace(paper_id=paper_id, content=None))
+    ideas = generate_ideas(SimpleNamespace(source_id=memo["id"], paper_id=paper_id, content=None))
+    scored = []
+    for idea in ideas:
+        result = score_idea(SimpleNamespace(idea_id=idea["id"], content=None))
+        scored.append({"page": idea, **result})
+    proposal = _promote_best_scored_idea(scored, getattr(args, "target_journal_logic", "TAR-style"))
+    critiques = []
+    advisor_memo = None
+    if proposal:
+        critiques = simulate_referees(SimpleNamespace(proposal_id=proposal["id"], content=None))
+        advisor_memo = generate_advisor_memo(SimpleNamespace(proposal_id=proposal["id"], content=None))
+        print("Auto pipeline finished through Advisor Memo.")
+    else:
+        print("Auto pipeline stopped after scoring because no idea met Promote rules.")
+    return {
+        "paper": paper,
+        "memo": memo,
+        "ideas": ideas,
+        "scored": scored,
+        "proposal": proposal,
+        "critiques": critiques,
+        "advisor_memo": advisor_memo,
+    }
+
+
+def process_inbox(args: Any) -> list[dict[str, Any]]:
+    settings = Settings()
+    notion = NotionClient(settings)
+    paper_db = require(settings.paper_bank_db_id, "PAPER_BANK_DB_ID")
+    data = notion.query_database(
+        paper_db,
+        {
+            "page_size": args.limit,
+            "filter": {"property": "Status", "select": {"equals": "Inbox"}},
+        },
+    )
+    results = []
+    for paper in data.get("results", []):
+        paper_id = paper["id"]
+        title = _page_title(paper, "Title") or paper_id
+        print(f"Processing Inbox paper: {title} ({paper_id})")
+        generate_paper_card(SimpleNamespace(paper_id=paper_id, content=None))
+        memo = generate_taste_memo(SimpleNamespace(paper_id=paper_id, content=None))
+        ideas = generate_ideas(SimpleNamespace(source_id=memo["id"], paper_id=paper_id, content=None))
+        scored = []
+        for idea in ideas:
+            result = score_idea(SimpleNamespace(idea_id=idea["id"], content=None))
+            scored.append({"page": idea, **result})
+        proposal = _promote_best_scored_idea(scored, args.target_journal_logic)
+        critiques = []
+        advisor_memo = None
+        if proposal:
+            critiques = simulate_referees(SimpleNamespace(proposal_id=proposal["id"], content=None))
+            advisor_memo = generate_advisor_memo(SimpleNamespace(proposal_id=proposal["id"], content=None))
+        notion.update_page(paper_id, {"Status": select_prop("Processed")})
+        results.append(
+            {
+                "paper": paper,
+                "memo": memo,
+                "ideas": ideas,
+                "scored": scored,
+                "proposal": proposal,
+                "critiques": critiques,
+                "advisor_memo": advisor_memo,
+            }
+        )
+    if not results:
+        print("No Inbox papers found.")
+    return results
+
+
 def weekly_review(args: Any) -> str:
     settings = Settings()
     notion = NotionClient(settings)
@@ -288,6 +366,20 @@ def weekly_review(args: Any) -> str:
     )
     print(f"Created weekly review in Writing Bank: {page['id']}")
     return markdown
+
+
+def _promote_best_scored_idea(scored: list[dict[str, Any]], target_journal_logic: str) -> dict[str, Any] | None:
+    promotable = [item for item in scored if item.get("decision") == "Promote"]
+    if not promotable:
+        return None
+    best = max(promotable, key=lambda item: int(item.get("total", 0)))
+    return promote_idea(
+        SimpleNamespace(
+            idea_id=best["page"]["id"],
+            target_journal_logic=target_journal_logic,
+            force=False,
+        )
+    )
 
 
 def smoke_test(args: Any) -> None:
