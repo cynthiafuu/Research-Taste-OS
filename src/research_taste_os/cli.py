@@ -34,7 +34,7 @@ def main() -> None:
     run.add_argument("--url")
     run.add_argument("--importance", type=int, default=3)
     run.add_argument("--abstract", default="")
-    run.add_argument("--content", help="Paper text, abstract, or path to .txt/.md")
+    run.add_argument("--content", help="Paper text, abstract, URL, or path to .pdf/.txt/.md")
     run.add_argument("--target-journal-logic", default="TAR-style")
     run.set_defaults(func=core.run_paper)
 
@@ -45,12 +45,12 @@ def main() -> None:
 
     paper_card = sub.add_parser("generate-paper-card", aliases=["paper-card"], help="Append a Paper Card to a paper")
     paper_card.add_argument("--paper-id", required=True)
-    paper_card.add_argument("--content", help="Paper text, abstract, or path to .txt/.md")
+    paper_card.add_argument("--content", help="Paper text, abstract, URL, or path to .pdf/.txt/.md")
     paper_card.set_defaults(func=core.generate_paper_card)
 
     taste = sub.add_parser("generate-taste-memo", aliases=["taste-memo"], help="Create a linked Taste Memo")
     taste.add_argument("--paper-id", required=True)
-    taste.add_argument("--content", help="Paper/Card text or path to .txt/.md")
+    taste.add_argument("--content", help="Paper/Card text, URL, or path to .pdf/.txt/.md")
     taste.set_defaults(func=core.generate_taste_memo)
 
     ideas = sub.add_parser("generate-ideas", aliases=["ideas"], help="Create exactly 3 Idea Bank entries")

@@ -65,7 +65,7 @@ The smoke test creates one sample Paper, Taste Memo, Idea, Proposal, Critique, a
 
 ## No-Manual Mode
 
-Fastest path: give the system one title plus an abstract or text file, and let it run the whole pipeline.
+Fastest path: give the system one title plus a PDF URL, local PDF, or text file, and let it run the whole pipeline.
 
 ```bash
 research-os run-paper \
@@ -74,10 +74,10 @@ research-os run-paper \
   --journal WP \
   --year 2026 \
   --field Disclosure \
-  --abstract "Paste abstract here"
+  --url "https://example.com/paper.pdf"
 ```
 
-For longer notes:
+For a local PDF:
 
 ```bash
 research-os run-paper \
@@ -85,7 +85,29 @@ research-os run-paper \
   --journal WP \
   --year 2026 \
   --field Capital\ Markets \
-  --content ./paper_notes.md
+  --content ./papers/paper.pdf
+```
+
+For paper notes or extracted text, use `.md` or `.txt`:
+
+```bash
+research-os run-paper \
+  --title "Paper title" \
+  --journal WP \
+  --year 2026 \
+  --field Auditing \
+  --content ./papers/paper_notes.md
+```
+
+Abstract-only still works, but it is only a quick screening mode:
+
+```bash
+research-os run-paper \
+  --title "Paper title" \
+  --journal WP \
+  --year 2026 \
+  --field Disclosure \
+  --abstract "Paste abstract here"
 ```
 
 What it does automatically:
@@ -98,6 +120,8 @@ What it does automatically:
 - If any idea is `Promote`, picks the highest score and creates a Mini Proposal.
 - Runs Referee Simulation.
 - Appends an Advisor Memo.
+
+PDF support is intentionally simple: it reads extractable text from the first 40 pages. Scanned PDFs need OCR text first.
 
 If you prefer to add papers directly inside Notion, set `Status = Inbox`, then run:
 

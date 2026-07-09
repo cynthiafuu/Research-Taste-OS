@@ -262,7 +262,13 @@ def generate_advisor_memo(args: Any) -> str:
 
 
 def run_paper(args: Any) -> dict[str, Any]:
-    content = read_text_source(getattr(args, "content", None)) or getattr(args, "abstract", "")
+    content = (
+        read_text_source(getattr(args, "content", None))
+        or read_text_source(getattr(args, "url", None))
+        or getattr(args, "abstract", "")
+    )
+    if not content:
+        raise SystemExit("Give the pipeline a PDF URL, local PDF path, .txt/.md path, or abstract.")
     paper = add_paper(args)
     paper_id = paper["id"]
     generate_paper_card(SimpleNamespace(paper_id=paper_id, content=content))
