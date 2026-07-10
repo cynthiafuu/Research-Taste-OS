@@ -300,10 +300,11 @@ def run_paper(args: Any) -> dict[str, Any]:
 
 
 def run_pdf(args: Any) -> dict[str, Any]:
-    metadata = infer_pdf_metadata(args.pdf)
+    pdf = _source_arg(getattr(args, "pdf", ""))
+    metadata = infer_pdf_metadata(pdf)
     title = args.title or metadata.get("title") or "Untitled Paper"
     year = args.year if args.year is not None else metadata.get("year")
-    source = metadata.get("source") or args.pdf
+    source = metadata.get("source") or pdf
     print(f"Auto-detected title: {title}")
     if year:
         print(f"Auto-detected year: {year}")
@@ -317,7 +318,7 @@ def run_pdf(args: Any) -> dict[str, Any]:
             url=source if str(source).startswith(("http://", "https://")) else None,
             importance=args.importance,
             abstract="",
-            content=args.pdf,
+            content=pdf,
             target_journal_logic=args.target_journal_logic,
         )
     )
@@ -439,6 +440,15 @@ def _promote_best_scored_idea(scored: list[dict[str, Any]], target_journal_logic
             force=False,
         )
     )
+
+
+def _source_arg(value: Any) -> str:
+    if isinstance(value, list):
+        value = " ".join(str(part) for part in value)
+    value = str(value).strip()
+    if value.startswith("./Users/"):
+        value = value[1:]
+    return value
 
 
 def smoke_test(args: Any) -> None:

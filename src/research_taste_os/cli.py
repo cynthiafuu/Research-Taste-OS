@@ -39,7 +39,7 @@ def main() -> None:
     run.set_defaults(func=core.run_paper)
 
     run_pdf = sub.add_parser("run-pdf", help="Upload-style pipeline: pass one PDF path or PDF URL and auto-detect metadata")
-    run_pdf.add_argument("pdf", help="Local PDF path or PDF URL")
+    run_pdf.add_argument("pdf", nargs="+", help="Local PDF path or PDF URL")
     run_pdf.add_argument("--title", help="Optional override if auto-detected title is bad")
     run_pdf.add_argument("--authors", default="")
     run_pdf.add_argument("--journal", default="WP")
