@@ -67,10 +67,24 @@ def add_paper(args: Any) -> dict[str, Any]:
             "Status": select_prop("Inbox"),
             "Importance": number_prop(args.importance),
         },
-        args.abstract and f"## Intake Notes\n{args.abstract}",
+        _paper_intake_markdown(args),
     )
     print(f"Created paper: {page['id']}")
     return page
+
+
+def _paper_intake_markdown(args: Any) -> str:
+    source = getattr(args, "url", None) or getattr(args, "content", None) or "Not provided"
+    abstract = getattr(args, "abstract", "")
+    parts = [
+        "## Source",
+        str(source),
+        "## Processing Status",
+        "Created. Waiting for automated Paper Card generation.",
+    ]
+    if abstract:
+        parts.extend(["## Intake Notes", abstract])
+    return "\n".join(parts)
 
 
 def generate_paper_card(args: Any) -> str:
@@ -272,31 +286,18 @@ def run_paper(args: Any) -> dict[str, Any]:
         raise SystemExit("Give the pipeline a PDF URL, local PDF path, .txt/.md path, or abstract.")
     paper = add_paper(args)
     paper_id = paper["id"]
-    generate_paper_card(SimpleNamespace(paper_id=paper_id, content=content))
-    memo = generate_taste_memo(SimpleNamespace(paper_id=paper_id, content=None))
-    ideas = generate_ideas(SimpleNamespace(source_id=memo["id"], paper_id=paper_id, content=None))
-    scored = []
-    for idea in ideas:
-        result = score_idea(SimpleNamespace(idea_id=idea["id"], content=None))
-        scored.append({"page": idea, **result})
-    proposal = _promote_best_scored_idea(scored, getattr(args, "target_journal_logic", "TAR-style"))
-    critiques = []
-    advisor_memo = None
-    if proposal:
-        critiques = simulate_referees(SimpleNamespace(proposal_id=proposal["id"], content=None))
-        advisor_memo = generate_advisor_memo(SimpleNamespace(proposal_id=proposal["id"], content=None))
-        print("Auto pipeline finished through Advisor Memo.")
-    else:
-        print("Auto pipeline stopped after scoring because no idea met Promote rules.")
-    return {
-        "paper": paper,
-        "memo": memo,
-        "ideas": ideas,
-        "scored": scored,
-        "proposal": proposal,
-        "critiques": critiques,
-        "advisor_memo": advisor_memo,
-    }
+    try:
+        return _run_pipeline_for_paper(
+            paper=paper,
+            content=content,
+            target_journal_logic=getattr(args, "target_journal_logic", "TAR-style"),
+        )
+    except Exception as exc:
+        _record_processing_error(paper_id, exc)
+        raise
+    except SystemExit as exc:
+        _record_processing_error(paper_id, exc)
+        raise
 
 
 def run_pdf(args: Any) -> dict[str, Any]:
@@ -350,6 +351,53 @@ def run_folder(args: Any) -> list[dict[str, Any]]:
             )
         )
     return results
+
+
+def _run_pipeline_for_paper(paper: dict[str, Any], content: str, target_journal_logic: str) -> dict[str, Any]:
+    paper_id = paper["id"]
+    generate_paper_card(SimpleNamespace(paper_id=paper_id, content=content))
+    memo = generate_taste_memo(SimpleNamespace(paper_id=paper_id, content=None))
+    ideas = generate_ideas(SimpleNamespace(source_id=memo["id"], paper_id=paper_id, content=None))
+    scored = []
+    for idea in ideas:
+        result = score_idea(SimpleNamespace(idea_id=idea["id"], content=None))
+        scored.append({"page": idea, **result})
+    proposal = _promote_best_scored_idea(scored, target_journal_logic)
+    critiques = []
+    advisor_memo = None
+    if proposal:
+        critiques = simulate_referees(SimpleNamespace(proposal_id=proposal["id"], content=None))
+        advisor_memo = generate_advisor_memo(SimpleNamespace(proposal_id=proposal["id"], content=None))
+        print("Auto pipeline finished through Advisor Memo.")
+    else:
+        print("Auto pipeline stopped after scoring because no idea met Promote rules.")
+    return {
+        "paper": paper,
+        "memo": memo,
+        "ideas": ideas,
+        "scored": scored,
+        "proposal": proposal,
+        "critiques": critiques,
+        "advisor_memo": advisor_memo,
+    }
+
+
+def _record_processing_error(paper_id: str, exc: BaseException) -> None:
+    try:
+        notion = NotionClient()
+        message = str(exc)[:1800]
+        notion.update_page(paper_id, {"Status": select_prop("Error")})
+        notion.append_markdown(
+            paper_id,
+            f"""## Processing Error
+The automated pipeline stopped here.
+
+### Error
+{message}
+""",
+        )
+    except Exception:
+        pass
 
 
 def process_inbox(args: Any) -> list[dict[str, Any]]:

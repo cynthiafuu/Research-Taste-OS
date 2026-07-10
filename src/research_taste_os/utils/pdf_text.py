@@ -18,6 +18,8 @@ def read_text_source(path_or_text: str | None) -> str:
         return ""
     if _is_url(path_or_text):
         return read_url(path_or_text)
+    if _looks_like_direct_text(path_or_text):
+        return _truncate(path_or_text)
     path = Path(path_or_text)
     if path.exists() and path.is_file():
         if path.suffix.lower() in {".txt", ".md"}:
@@ -104,6 +106,14 @@ def _is_url(value: str) -> bool:
 
 def _truncate(text: str) -> str:
     return text[:MAX_CHARS]
+
+
+def _looks_like_direct_text(value: str) -> bool:
+    if "\n" in value or "\r" in value:
+        return True
+    if len(value) > 500:
+        return True
+    return False
 
 
 def _metadata_title(reader: PdfReader) -> str | None:

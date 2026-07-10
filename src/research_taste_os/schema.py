@@ -67,7 +67,7 @@ BASE_SCHEMAS: dict[str, tuple[str, dict[str, Any]]] = {
             "Year": number(),
             "Field": multi_select(FIELDS),
             "PDF/Link": url(),
-            "Status": select(["Inbox", "Reading", "Processed", "Archived"]),
+            "Status": select(["Inbox", "Reading", "Processed", "Error", "Archived"]),
             "Importance": number(),
             "Created Date": created_time(),
         },

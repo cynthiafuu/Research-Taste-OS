@@ -4,6 +4,8 @@ import json
 import re
 from typing import Any
 
+from openai import OpenAIError, RateLimitError
+
 from .config import Settings, require
 from .prompts import SYSTEM
 
@@ -18,23 +20,39 @@ class LLMClient:
         self.client = OpenAI(api_key=require(self.settings.openai_api_key, "OPENAI_API_KEY"))
 
     def complete(self, prompt: str) -> str:
-        response = self.client.responses.create(
-            model=self.settings.openai_model,
-            input=[
-                {"role": "system", "content": SYSTEM},
-                {"role": "user", "content": prompt},
-            ],
-        )
+        try:
+            response = self.client.responses.create(
+                model=self.settings.openai_model,
+                input=[
+                    {"role": "system", "content": SYSTEM},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+        except RateLimitError as exc:
+            raise SystemExit(
+                "OpenAI API quota/billing is not available. The PDF was read and the Paper Bank row was created, "
+                "but AI generation cannot continue until OPENAI_API_KEY has usable credits/billing."
+            ) from exc
+        except OpenAIError as exc:
+            raise SystemExit(f"OpenAI API error: {exc}") from exc
         return response.output_text.strip()
 
     def json(self, prompt: str) -> dict[str, Any]:
-        response = self.client.responses.create(
-            model=self.settings.openai_model,
-            input=[
-                {"role": "system", "content": SYSTEM},
-                {"role": "user", "content": prompt},
-            ],
-        )
+        try:
+            response = self.client.responses.create(
+                model=self.settings.openai_model,
+                input=[
+                    {"role": "system", "content": SYSTEM},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+        except RateLimitError as exc:
+            raise SystemExit(
+                "OpenAI API quota/billing is not available. AI scoring/generation cannot continue until "
+                "OPENAI_API_KEY has usable credits/billing."
+            ) from exc
+        except OpenAIError as exc:
+            raise SystemExit(f"OpenAI API error: {exc}") from exc
         text = response.output_text.strip()
         if text.startswith("```"):
             text = re.sub(r"^```(?:json)?\s*", "", text)
