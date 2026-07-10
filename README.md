@@ -65,7 +65,33 @@ The smoke test creates one sample Paper, Taste Memo, Idea, Proposal, Critique, a
 
 ## No-Manual Mode
 
-Fastest path: give the system one title plus a PDF URL, local PDF, or text file, and let it run the whole pipeline.
+Fastest path: pass one PDF file or PDF URL. The system guesses title/year, defaults to `journal=WP` and `field=Other`, then runs the whole pipeline.
+
+```bash
+research-os run-pdf ./papers/paper.pdf
+```
+
+Tip on macOS: type `research-os run-pdf `, then drag the PDF into Terminal and press Enter.
+
+For a PDF URL:
+
+```bash
+research-os run-pdf "https://example.com/paper.pdf"
+```
+
+For a folder of PDFs:
+
+```bash
+research-os run-folder ./papers --limit 5
+```
+
+Optional overrides are available only when the auto-detected metadata is bad:
+
+```bash
+research-os run-pdf ./papers/paper.pdf --title "Correct Paper Title" --field Disclosure
+```
+
+Advanced path: give the system one title plus a PDF URL, local PDF, or text file.
 
 ```bash
 research-os run-paper \

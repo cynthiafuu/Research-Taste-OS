@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -20,7 +21,7 @@ from ..notion_client import (
     url_prop,
 )
 from ..schema import BASE_SCHEMAS, data_source_properties, relation_patches
-from ..utils.pdf_text import read_text_source
+from ..utils.pdf_text import infer_pdf_metadata, read_text_source
 from ..utils.scoring import SCORE_FIELDS, decision_for_scores, total_score
 
 
@@ -296,6 +297,58 @@ def run_paper(args: Any) -> dict[str, Any]:
         "critiques": critiques,
         "advisor_memo": advisor_memo,
     }
+
+
+def run_pdf(args: Any) -> dict[str, Any]:
+    metadata = infer_pdf_metadata(args.pdf)
+    title = args.title or metadata.get("title") or "Untitled Paper"
+    year = args.year if args.year is not None else metadata.get("year")
+    source = metadata.get("source") or args.pdf
+    print(f"Auto-detected title: {title}")
+    if year:
+        print(f"Auto-detected year: {year}")
+    return run_paper(
+        SimpleNamespace(
+            title=title,
+            authors=args.authors,
+            journal=args.journal,
+            year=year,
+            field=args.field or ["Other"],
+            url=source if str(source).startswith(("http://", "https://")) else None,
+            importance=args.importance,
+            abstract="",
+            content=args.pdf,
+            target_journal_logic=args.target_journal_logic,
+        )
+    )
+
+
+def run_folder(args: Any) -> list[dict[str, Any]]:
+    folder = Path(args.folder)
+    if not folder.exists() or not folder.is_dir():
+        raise SystemExit(f"Folder not found: {folder}")
+    pdfs = sorted(folder.glob("*.pdf"))[: args.limit]
+    if not pdfs:
+        print(f"No PDFs found in {folder}")
+        return []
+    results = []
+    for pdf in pdfs:
+        print(f"Processing PDF: {pdf}")
+        results.append(
+            run_pdf(
+                SimpleNamespace(
+                    pdf=str(pdf),
+                    title=None,
+                    authors=args.authors,
+                    journal=args.journal,
+                    year=None,
+                    field=args.field,
+                    importance=args.importance,
+                    target_journal_logic=args.target_journal_logic,
+                )
+            )
+        )
+    return results
 
 
 def process_inbox(args: Any) -> list[dict[str, Any]]:

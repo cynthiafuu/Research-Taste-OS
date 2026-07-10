@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import re
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -53,6 +54,35 @@ def read_pdf_bytes(content: bytes) -> str:
     return text
 
 
+def infer_pdf_metadata(path_or_url: str) -> dict[str, str | int | None]:
+    if _is_url(path_or_url):
+        filename = Path(urlparse(path_or_url).path).stem
+        try:
+            response = requests.get(
+                path_or_url,
+                headers={"User-Agent": "ResearchTasteOS/0.1"},
+                timeout=60,
+                allow_redirects=True,
+            )
+            response.raise_for_status()
+            reader = PdfReader(io.BytesIO(response.content))
+            first_text = reader.pages[0].extract_text() if reader.pages else ""
+            title = _metadata_title(reader) or _title_from_first_page(first_text) or _title_from_filename(filename)
+            year = _year_from_text(f"{filename}\n{first_text}")
+            return {"title": title, "year": year, "source": response.url}
+        except Exception:
+            return {"title": _title_from_filename(filename), "year": _year_from_text(filename), "source": path_or_url}
+    path = Path(path_or_url)
+    filename = path.stem
+    if path.exists() and path.is_file() and path.suffix.lower() == ".pdf":
+        reader = PdfReader(str(path))
+        first_text = reader.pages[0].extract_text() if reader.pages else ""
+        title = _metadata_title(reader) or _title_from_first_page(first_text) or _title_from_filename(filename)
+        year = _year_from_text(f"{filename}\n{first_text}")
+        return {"title": title, "year": year, "source": str(path)}
+    return {"title": _title_from_filename(filename or path_or_url), "year": _year_from_text(path_or_url), "source": path_or_url}
+
+
 def read_html(html: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "nav", "footer", "header"]):
@@ -74,3 +104,49 @@ def _is_url(value: str) -> bool:
 
 def _truncate(text: str) -> str:
     return text[:MAX_CHARS]
+
+
+def _metadata_title(reader: PdfReader) -> str | None:
+    metadata = reader.metadata
+    if not metadata:
+        return None
+    title = getattr(metadata, "title", None) or metadata.get("/Title")
+    if not title:
+        return None
+    clean = str(title).strip()
+    if not clean or clean.lower() in {"untitled", "default"}:
+        return None
+    return clean[:200]
+
+
+def _title_from_first_page(text: str | None) -> str | None:
+    if not text:
+        return None
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    candidates = []
+    for line in lines[:20]:
+        if len(line) < 12 or len(line) > 180:
+            continue
+        lower = line.lower()
+        if any(skip in lower for skip in ["abstract", "introduction", "journal", "ssrn", "working paper"]):
+            continue
+        if re.fullmatch(r"[\d\s.,;:()/-]+", line):
+            continue
+        candidates.append(line)
+    return candidates[0] if candidates else None
+
+
+def _title_from_filename(filename: str) -> str:
+    cleaned = re.sub(r"[_-]+", " ", filename)
+    cleaned = re.sub(r"\b(19|20)\d{2}\b", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned.title() if cleaned else "Untitled Paper"
+
+
+def _year_from_text(text: str | None) -> int | None:
+    if not text:
+        return None
+    matches = re.findall(r"\b(20[0-3]\d|19[8-9]\d)\b", text)
+    if not matches:
+        return None
+    return int(matches[-1])
