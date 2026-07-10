@@ -108,6 +108,32 @@ class NotionClient:
         data_source_id = normalize_notion_id(data_source_id)
         return self.request("POST", f"/data_sources/{data_source_id}/query", payload or {})
 
+    def create_linked_view(
+        self,
+        parent_page_id: str,
+        data_source_id: str,
+        name: str,
+        view_type: str = "table",
+        filter_payload: dict[str, Any] | None = None,
+        sorts: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "create_database": {
+                "parent": {
+                    "type": "page_id",
+                    "page_id": normalize_notion_id(parent_page_id),
+                }
+            },
+            "data_source_id": normalize_notion_id(data_source_id),
+            "name": name,
+            "type": view_type,
+        }
+        if filter_payload:
+            payload["filter"] = filter_payload
+        if sorts:
+            payload["sorts"] = sorts
+        return self.request("POST", "/views", payload)
+
     def page_text(self, page_id: str) -> str:
         blocks = self.retrieve_block_children(page_id)
         lines: list[str] = []

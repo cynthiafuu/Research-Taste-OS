@@ -11,6 +11,7 @@ from pypdf import PdfReader
 
 
 MAX_CHARS = 65000
+BAD_TITLE_MARKERS = ["pii:", "s0378", "microsoft word", "untitled", "default"]
 
 
 def read_text_source(path_or_text: str | None) -> str:
@@ -69,20 +70,36 @@ def infer_pdf_metadata(path_or_url: str) -> dict[str, str | int | None]:
             response.raise_for_status()
             reader = PdfReader(io.BytesIO(response.content))
             first_text = reader.pages[0].extract_text() if reader.pages else ""
-            title = _metadata_title(reader) or _title_from_first_page(first_text) or _title_from_filename(filename)
+            metadata_title = _metadata_title(reader)
+            page_title = _title_from_first_page(first_text)
+            title = _best_title(metadata_title, page_title, filename)
             year = _year_from_text(f"{filename}\n{first_text}")
-            return {"title": title, "year": year, "source": response.url}
+            return {
+                "title": title,
+                "authors": _authors_from_first_page(first_text, title),
+                "abstract": _abstract_from_text(first_text),
+                "year": year,
+                "source": response.url,
+            }
         except Exception:
-            return {"title": _title_from_filename(filename), "year": _year_from_text(filename), "source": path_or_url}
+            return {"title": _title_from_filename(filename), "authors": "", "abstract": "", "year": _year_from_text(filename), "source": path_or_url}
     path = Path(path_or_url)
     filename = path.stem
     if path.exists() and path.is_file() and path.suffix.lower() == ".pdf":
         reader = PdfReader(str(path))
         first_text = reader.pages[0].extract_text() if reader.pages else ""
-        title = _metadata_title(reader) or _title_from_first_page(first_text) or _title_from_filename(filename)
+        metadata_title = _metadata_title(reader)
+        page_title = _title_from_first_page(first_text)
+        title = _best_title(metadata_title, page_title, filename)
         year = _year_from_text(f"{filename}\n{first_text}")
-        return {"title": title, "year": year, "source": str(path)}
-    return {"title": _title_from_filename(filename or path_or_url), "year": _year_from_text(path_or_url), "source": path_or_url}
+        return {
+            "title": title,
+            "authors": _authors_from_first_page(first_text, title),
+            "abstract": _abstract_from_text(first_text),
+            "year": year,
+            "source": str(path),
+        }
+    return {"title": _title_from_filename(filename or path_or_url), "authors": "", "abstract": "", "year": _year_from_text(path_or_url), "source": path_or_url}
 
 
 def read_html(html: str) -> str:
@@ -124,7 +141,7 @@ def _metadata_title(reader: PdfReader) -> str | None:
     if not title:
         return None
     clean = str(title).strip()
-    if not clean or clean.lower() in {"untitled", "default"}:
+    if not clean or _bad_title(clean):
         return None
     return clean[:200]
 
@@ -134,16 +151,83 @@ def _title_from_first_page(text: str | None) -> str | None:
         return None
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     candidates = []
-    for line in lines[:20]:
+    for index, line in enumerate(lines[:20]):
         if len(line) < 12 or len(line) > 180:
             continue
         lower = line.lower()
-        if any(skip in lower for skip in ["abstract", "introduction", "journal", "ssrn", "working paper"]):
+        if any(skip in lower for skip in ["abstract", "introduction", "journal", "ssrn", "working paper", "received", "accepted"]):
+            continue
+        if _bad_title(line):
             continue
         if re.fullmatch(r"[\d\s.,;:()/-]+", line):
             continue
+        next_line = lines[index + 1].strip() if index + 1 < len(lines) else ""
+        if next_line and _looks_like_title_continuation(next_line):
+            line = f"{line} {next_line}"
         candidates.append(line)
     return candidates[0] if candidates else None
+
+
+def _best_title(metadata_title: str | None, page_title: str | None, filename: str) -> str:
+    for candidate in [page_title, metadata_title, _title_from_filename(filename)]:
+        if candidate and not _bad_title(candidate):
+            return candidate
+    return _title_from_filename(filename)
+
+
+def _bad_title(value: str) -> bool:
+    lower = value.lower().strip()
+    return any(marker in lower for marker in BAD_TITLE_MARKERS)
+
+
+def _authors_from_first_page(text: str | None, title: str | None) -> str:
+    if not text:
+        return ""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    start = _author_start_index(lines, title)
+    candidates = []
+    for line in lines[start : start + 6]:
+        lower = line.lower()
+        if _looks_like_title_continuation(line):
+            continue
+        if any(stop in lower for stop in ["abstract", "received", "accepted", "journal", "keywords", "jel"]):
+            break
+        if "@" in line or any(ch.isdigit() for ch in line) or "university" in lower or "department" in lower:
+            continue
+        if len(line) < 4 or len(line) > 180:
+            continue
+        candidates.append(line.replace("*", "").strip())
+    return "; ".join(candidates[:3])
+
+
+def _looks_like_title_continuation(line: str) -> bool:
+    lower = line.strip().lower()
+    return lower.startswith(("to ", "and ", "of ", "for ", "in ", "on ", "with ", "without "))
+
+
+def _author_start_index(lines: list[str], title: str | None) -> int:
+    if not title:
+        return 1
+    title_words = set(re.findall(r"[a-z]+", title.lower()))
+    best_index = 0
+    best_score = 0
+    for index, line in enumerate(lines[:15]):
+        words = set(re.findall(r"[a-z]+", line.lower()))
+        score = len(title_words & words)
+        if score > best_score:
+            best_score = score
+            best_index = index
+    return min(best_index + 2, len(lines))
+
+
+def _abstract_from_text(text: str | None) -> str:
+    if not text:
+        return ""
+    normalized = re.sub(r"\s+", " ", text)
+    match = re.search(r"\bAbstract\b[:\s]*(.*?)(?:\bJEL\b|\bKeywords\b|\b1\.\s+Introduction\b|\bIntroduction\b)", normalized, re.IGNORECASE)
+    if not match:
+        return ""
+    return match.group(1).strip()[:1800]
 
 
 def _title_from_filename(filename: str) -> str:

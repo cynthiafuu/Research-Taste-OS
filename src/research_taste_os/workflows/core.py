@@ -51,6 +51,23 @@ def setup_notion() -> dict[str, str]:
     return ids
 
 
+def polish_notion(args: Any) -> None:
+    settings = Settings()
+    notion = NotionClient(settings)
+    ids = {key: require(value, key.upper() + "_DB_ID") for key, value in settings.db_ids.items()}
+    for key, (_, properties) in BASE_SCHEMAS.items():
+        title_name = next((name for name, definition in properties.items() if "title" in definition), None)
+        non_title = {name: definition for name, definition in properties.items() if name != title_name}
+        notion.update_data_source(ids[key], non_title)
+        print(f"Updated schema: {key}")
+    for key, properties in relation_patches(ids).items():
+        notion.update_data_source(ids[key], properties)
+        print(f"Updated relations: {key}")
+    _repair_error_papers(notion, ids["paper_bank"])
+    _append_dashboard(notion, require(settings.notion_parent_page_id, "NOTION_PARENT_PAGE_ID"), ids)
+    print("Notion workspace polished.")
+
+
 def add_paper(args: Any) -> dict[str, Any]:
     settings = Settings()
     notion = NotionClient(settings)
@@ -64,8 +81,16 @@ def add_paper(args: Any) -> dict[str, Any]:
             "Year": number_prop(args.year),
             "Field": multi_select_prop(args.field or []),
             "PDF/Link": url_prop(args.url),
+            "Source Path": rich_text_prop(getattr(args, "source_path", None) or getattr(args, "content", None)),
             "Status": select_prop("Inbox"),
+            "Pipeline Step": select_prop("Intake"),
             "Importance": number_prop(args.importance),
+            "Detected Title": rich_text_prop(getattr(args, "detected_title", "") or args.title),
+            "Abstract": rich_text_prop(getattr(args, "abstract", "")),
+            "One-Sentence Summary": rich_text_prop(_one_sentence_from_abstract(getattr(args, "abstract", ""))),
+            "Research Question": rich_text_prop("Pending AI extraction"),
+            "Key Takeaway": rich_text_prop("Pending AI extraction"),
+            "Error Message": rich_text_prop(""),
         },
         _paper_intake_markdown(args),
     )
@@ -77,6 +102,11 @@ def _paper_intake_markdown(args: Any) -> str:
     source = getattr(args, "url", None) or getattr(args, "content", None) or "Not provided"
     abstract = getattr(args, "abstract", "")
     parts = [
+        "## Local Paper Snapshot",
+        f"Title: {getattr(args, 'title', 'Untitled Paper')}",
+        f"Authors: {getattr(args, 'authors', '') or 'Not detected'}",
+        f"Year: {getattr(args, 'year', None) or 'Not detected'}",
+        f"Field: {', '.join(getattr(args, 'field', []) or ['Other'])}",
         "## Source",
         str(source),
         "## Processing Status",
@@ -87,6 +117,13 @@ def _paper_intake_markdown(args: Any) -> str:
     return "\n".join(parts)
 
 
+def _one_sentence_from_abstract(abstract: str | None) -> str:
+    if not abstract:
+        return ""
+    first = re.split(r"(?<=[.!?])\s+", abstract.strip())[0]
+    return first[:500]
+
+
 def generate_paper_card(args: Any) -> str:
     settings = Settings()
     notion = NotionClient(settings)
@@ -94,7 +131,16 @@ def generate_paper_card(args: Any) -> str:
     content = read_text_source(args.content) or notion.page_text(args.paper_id)
     markdown = llm.complete(prompts.PAPER_CARD.format(content=content))
     notion.append_markdown(args.paper_id, markdown)
-    notion.update_page(args.paper_id, {"Status": select_prop("Reading")})
+    notion.update_page(
+        args.paper_id,
+        {
+            "Status": select_prop("Reading"),
+            "Pipeline Step": select_prop("Paper Card"),
+            "One-Sentence Summary": rich_text_prop(_first_section_line(markdown, "One-Sentence Summary")),
+            "Research Question": rich_text_prop(_first_section_line(markdown, "Research Question")),
+            "Key Takeaway": rich_text_prop(_first_section_line(markdown, "Main Finding")),
+        },
+    )
     print(f"Added Paper Card to paper: {args.paper_id}")
     return markdown
 
@@ -125,6 +171,7 @@ def generate_taste_memo(args: Any) -> dict[str, Any]:
         markdown,
     )
     notion.update_page(args.paper_id, {"Related Taste Memo": relation_prop([page["id"]])})
+    notion.update_page(args.paper_id, {"Pipeline Step": select_prop("Taste Memo")})
     print(f"Created Taste Memo: {page['id']}")
     return page
 
@@ -157,6 +204,8 @@ def generate_ideas(args: Any) -> list[dict[str, Any]]:
         )
         pages.append(page)
         print(f"Created idea: {page['id']}")
+    if getattr(args, "paper_id", None):
+        notion.update_page(args.paper_id, {"Related Ideas": relation_prop([page["id"] for page in pages]), "Pipeline Step": select_prop("Ideas")})
     return pages
 
 
@@ -312,13 +361,15 @@ def run_pdf(args: Any) -> dict[str, Any]:
     return run_paper(
         SimpleNamespace(
             title=title,
-            authors=args.authors,
+            authors=args.authors or metadata.get("authors", ""),
             journal=args.journal,
             year=year,
             field=args.field or ["Other"],
             url=source if str(source).startswith(("http://", "https://")) else None,
+            source_path=None if str(source).startswith(("http://", "https://")) else source,
             importance=args.importance,
-            abstract="",
+            abstract=metadata.get("abstract", ""),
+            detected_title=metadata.get("title", ""),
             content=pdf,
             target_journal_logic=args.target_journal_logic,
         )
@@ -387,6 +438,7 @@ def _record_processing_error(paper_id: str, exc: BaseException) -> None:
         notion = NotionClient()
         message = str(exc)[:1800]
         notion.update_page(paper_id, {"Status": select_prop("Error")})
+        notion.update_page(paper_id, {"Pipeline Step": select_prop("Error"), "Error Message": rich_text_prop(message)})
         notion.append_markdown(
             paper_id,
             f"""## Processing Error
@@ -398,6 +450,110 @@ The automated pipeline stopped here.
         )
     except Exception:
         pass
+
+
+def _repair_error_papers(notion: NotionClient, paper_bank_id: str) -> None:
+    data = notion.query_database(paper_bank_id, {"page_size": 100})
+    for page in data.get("results", []):
+        props = page.get("properties", {})
+        status = _select_value(props.get("Status"))
+        body = notion.page_text(page["id"])
+        if status == "Error" or "Processing Error" in body:
+            message = _extract_error_message(body) or "Pipeline stopped before AI outputs were created. Check OpenAI API quota/billing, then re-run the PDF."
+            notion.update_page(
+                page["id"],
+                {
+                    "Status": select_prop("Error"),
+                    "Pipeline Step": select_prop("Error"),
+                    "Error Message": rich_text_prop(message),
+                    "Research Question": rich_text_prop("Not generated because AI step failed"),
+                    "Key Takeaway": rich_text_prop("Fix OpenAI API billing/quota, then re-run this paper"),
+                },
+            )
+
+
+def _append_dashboard(notion: NotionClient, parent_page_id: str, ids: dict[str, str]) -> None:
+    parent_page_id = normalize_notion_id(parent_page_id)
+    counts = {key: len(notion.query_database(value, {"page_size": 100}).get("results", [])) for key, value in ids.items()}
+    markdown = f"""# Research Taste OS Dashboard
+
+## Current Status
+- Paper Bank: {counts.get("paper_bank", 0)} records
+- Taste Memos: {counts.get("taste_memos", 0)} records
+- Idea Bank: {counts.get("idea_bank", 0)} records
+- Mini Proposals: {counts.get("mini_proposals", 0)} records
+- Referee Critiques: {counts.get("referee_bank", 0)} records
+- Writing Bank: {counts.get("writing_bank", 0)} records
+
+## What To Run
+- One PDF: research-os run-pdf "/path/to/paper.pdf"
+- Folder of PDFs: research-os run-folder "/path/to/folder" --limit 3
+- Weekly review: research-os weekly-review
+
+## How To Read This Workspace
+- Paper Bank is the reading queue and paper-level snapshot.
+- Taste Memos should contain judgment about why the paper works or fails.
+- Idea Bank should contain extensions scored by the 8-factor rubric.
+- Mini Proposals should contain only promoted ideas.
+- Referee Critiques should contain simulated objections and revision actions.
+- Writing Bank stores reusable academic writing patterns and weekly reviews.
+
+## Important
+- If Paper Bank shows Status = Error, the PDF was read but AI generation stopped.
+- Empty Taste Memos / Idea Bank usually means OpenAI API quota or billing failed before generation.
+- Do not run setup-notion again; it creates another duplicate workspace.
+"""
+    notion.append_markdown(parent_page_id, markdown)
+    _create_dashboard_views(notion, parent_page_id, ids)
+
+
+def _create_dashboard_views(notion: NotionClient, parent_page_id: str, ids: dict[str, str]) -> None:
+    view_specs = [
+        (
+            ids["paper_bank"],
+            "Active Paper Queue",
+            {"property": "Status", "select": {"does_not_equal": "Archived"}},
+            [{"property": "Created Date", "direction": "descending"}],
+        ),
+        (
+            ids["paper_bank"],
+            "Needs Attention",
+            {"property": "Status", "select": {"equals": "Error"}},
+            [{"property": "Created Date", "direction": "descending"}],
+        ),
+        (
+            ids["taste_memos"],
+            "Taste Memos To Review",
+            {"property": "Status", "select": {"does_not_equal": "Archived"}},
+            [{"property": "Overall Taste Score", "direction": "descending"}],
+        ),
+        (
+            ids["idea_bank"],
+            "Ideas To Review",
+            {"property": "Stage", "select": {"does_not_equal": "Archived"}},
+            [{"property": "Total Score", "direction": "descending"}],
+        ),
+        (
+            ids["mini_proposals"],
+            "Mini Proposals",
+            {"property": "Status", "select": {"does_not_equal": "Archived"}},
+            [{"property": "Created Date", "direction": "descending"}],
+        ),
+    ]
+    for data_source_id, name, filter_payload, sorts in view_specs:
+        try:
+            notion.create_linked_view(parent_page_id, data_source_id, name, "table", filter_payload, sorts)
+            print(f"Created dashboard view: {name}")
+        except SystemExit as exc:
+            print(f"Could not create dashboard view {name}: {exc}")
+
+
+def _extract_error_message(body: str) -> str:
+    if "OpenAI API quota" in body or "quota/billing" in body:
+        return "OpenAI API quota/billing is unavailable. The PDF was read, but AI generation could not continue."
+    if "insufficient_quota" in body:
+        return "OpenAI API insufficient_quota. Add billing/credits to the API account, then re-run."
+    return ""
 
 
 def process_inbox(args: Any) -> list[dict[str, Any]]:

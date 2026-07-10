@@ -13,6 +13,9 @@ def main() -> None:
         func=core.setup_notion
     )
     sub.add_parser("smoke-test", help="Create one sample page in each database").set_defaults(func=core.smoke_test)
+    sub.add_parser("polish-notion", help="Improve schemas, repair error rows, and append a readable dashboard").set_defaults(
+        func=core.polish_notion
+    )
 
     add = sub.add_parser("add-paper", help="Create a Paper Bank entry")
     add.add_argument("--title", required=True)
