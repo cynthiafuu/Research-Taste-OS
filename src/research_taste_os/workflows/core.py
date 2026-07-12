@@ -63,8 +63,12 @@ def polish_notion(args: Any) -> None:
     for key, properties in relation_patches(ids).items():
         notion.update_data_source(ids[key], properties)
         print(f"Updated relations: {key}")
+    parent_page_id = require(settings.notion_parent_page_id, "NOTION_PARENT_PAGE_ID")
+    _clean_parent_page(notion, parent_page_id)
     _repair_error_papers(notion, ids["paper_bank"])
-    _append_dashboard(notion, require(settings.notion_parent_page_id, "NOTION_PARENT_PAGE_ID"), ids)
+    _dedupe_and_fix_papers(notion, ids)
+    dashboard = _create_clean_dashboard(notion, parent_page_id, ids)
+    notion.append_markdown(parent_page_id, f"## Clean Dashboard\nUse this cleaned dashboard: {dashboard.get('url', '')}")
     print("Notion workspace polished.")
 
 
@@ -470,6 +474,80 @@ def _repair_error_papers(notion: NotionClient, paper_bank_id: str) -> None:
                     "Key Takeaway": rich_text_prop("Fix OpenAI API billing/quota, then re-run this paper"),
                 },
             )
+
+
+def _clean_parent_page(notion: NotionClient, parent_page_id: str) -> None:
+    children = notion.retrieve_block_children(parent_page_id)
+    for block in children:
+        block_type = block.get("type")
+        if block_type in {"paragraph", "heading_1", "heading_2", "heading_3", "bulleted_list_item", "numbered_list_item", "code"}:
+            try:
+                notion.archive_block(block["id"])
+            except SystemExit:
+                pass
+
+
+def _dedupe_and_fix_papers(notion: NotionClient, ids: dict[str, str]) -> None:
+    papers = notion.query_database(ids["paper_bank"], {"page_size": 100}).get("results", [])
+    keep_by_title: dict[str, str] = {}
+    for paper in papers:
+        title = _page_title(paper, "Title").strip()
+        key = title.lower()
+        props = paper.get("properties", {})
+        related_memos = props.get("Related Taste Memo", {}).get("relation", [])
+        related_ideas = props.get("Related Ideas", {}).get("relation", [])
+        if key and (related_memos or related_ideas):
+            keep_by_title[key] = paper["id"]
+            notion.update_page(
+                paper["id"],
+                {
+                    "Status": select_prop("Processed"),
+                    "Pipeline Step": select_prop("Scored"),
+                    "Key Takeaway": rich_text_prop("Pipeline completed through idea scoring. No mini proposal was created because no idea met Promote rules."),
+                },
+            )
+    for paper in papers:
+        title = _page_title(paper, "Title").strip()
+        key = title.lower()
+        status = _select_value(paper.get("properties", {}).get("Status"))
+        if status == "Error" and keep_by_title.get(key) and keep_by_title[key] != paper["id"]:
+            notion.update_page(
+                paper["id"],
+                {
+                    "Status": select_prop("Archived"),
+                    "Pipeline Step": select_prop("Error"),
+                    "Error Message": rich_text_prop("Archived duplicate failed run. Use the processed Paper Bank record for this paper."),
+                },
+            )
+
+
+def _create_clean_dashboard(notion: NotionClient, parent_page_id: str, ids: dict[str, str]) -> dict[str, Any]:
+    counts = {key: len(notion.query_database(value, {"page_size": 100}).get("results", [])) for key, value in ids.items()}
+    dashboard = notion.create_child_page(
+        parent_page_id,
+        "Research Taste OS - Clean Dashboard",
+        f"""# Research Taste OS - Clean Dashboard
+
+## What Matters Today
+- Paper records: {counts.get("paper_bank", 0)}
+- Taste memos: {counts.get("taste_memos", 0)}
+- Ideas generated: {counts.get("idea_bank", 0)}
+- Mini proposals: {counts.get("mini_proposals", 0)}
+- Referee critiques: {counts.get("referee_bank", 0)}
+
+## How To Use
+- One PDF: research-os run-pdf "/path/to/paper.pdf"
+- Folder: research-os run-folder "/path/to/folder" --limit 3
+- Do not run setup-notion again.
+
+## How To Interpret Results
+- Processed + Scored means the workflow reached idea scoring.
+- Mini Proposals appear only when at least one idea is scored Promote.
+- Archived rows are duplicate failed runs, hidden from the active workflow.
+""",
+    )
+    _create_dashboard_views(notion, dashboard["id"], ids)
+    return dashboard
 
 
 def _append_dashboard(notion: NotionClient, parent_page_id: str, ids: dict[str, str]) -> None:

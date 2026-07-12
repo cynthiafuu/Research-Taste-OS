@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import requests
@@ -19,13 +20,22 @@ class NotionClient:
         }
 
     def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        response = requests.request(
-            method,
-            f"{self.base_url}{path}",
-            headers=self.headers,
-            json=payload,
-            timeout=60,
-        )
+        response = None
+        for attempt in range(4):
+            try:
+                response = requests.request(
+                    method,
+                    f"{self.base_url}{path}",
+                    headers=self.headers,
+                    json=payload,
+                    timeout=60,
+                )
+                break
+            except requests.RequestException:
+                if attempt == 3:
+                    raise
+                time.sleep(1.5 * (attempt + 1))
+        assert response is not None
         if response.status_code >= 400:
             raise SystemExit(f"Notion API error {response.status_code}: {response.text}")
         return response.json()
@@ -72,6 +82,15 @@ class NotionClient:
             payload["children"] = markdown_to_blocks(markdown)[:100]
         return self.request("POST", "/pages", payload)
 
+    def create_child_page(self, parent_page_id: str, title: str, markdown: str | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "parent": {"type": "page_id", "page_id": normalize_notion_id(parent_page_id)},
+            "properties": {"title": title_prop(title)},
+        }
+        if markdown:
+            payload["children"] = markdown_to_blocks(markdown)[:100]
+        return self.request("POST", "/pages", payload)
+
     def update_page(self, page_id: str, properties: dict[str, Any]) -> dict[str, Any]:
         page_id = normalize_notion_id(page_id)
         return self.request("PATCH", f"/pages/{page_id}", {"properties": properties})
@@ -87,6 +106,10 @@ class NotionClient:
                 {"children": blocks[offset : offset + 100]},
             )
         return result
+
+    def archive_block(self, block_id: str) -> dict[str, Any]:
+        block_id = normalize_notion_id(block_id)
+        return self.request("PATCH", f"/blocks/{block_id}", {"archived": True})
 
     def retrieve_page(self, page_id: str) -> dict[str, Any]:
         page_id = normalize_notion_id(page_id)
