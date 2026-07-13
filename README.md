@@ -2,6 +2,22 @@
 
 Notion-first MVP workflow for improving Accounting PhD research taste.
 
+## Current Recommended Mode: One Paper, One Page
+
+The workflow is now simplified: **Paper Bank is the main interface**. Each PDF creates one Paper Bank page, and all generated analysis is appended inside that same page:
+
+```text
+Paper Snapshot -> Paper Card -> Taste Memo -> Idea Extensions -> Scorecards -> Mini Proposal if any
+```
+
+Use:
+
+```bash
+research-os run-pdf "/path/to/paper.pdf"
+```
+
+You do not need to use the separate Taste Memo / Idea / Proposal databases for daily reading. They are kept only as legacy relational storage.
+
 The system turns papers into structured Paper Cards, Taste Memos, idea extensions, idea scorecards, Mini Proposals, Referee Critiques, Advisor Memos, and weekly research-taste reviews.
 
 Core loop:

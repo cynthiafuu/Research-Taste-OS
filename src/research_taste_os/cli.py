@@ -28,7 +28,7 @@ def main() -> None:
     add.add_argument("--abstract", default="")
     add.set_defaults(func=core.add_paper)
 
-    run = sub.add_parser("run-paper", help="One-command pipeline: add paper, memo, ideas, scoring, proposal, referees, advisor memo")
+    run = sub.add_parser("run-paper", help="One-command single-page pipeline: one Paper Bank page contains all analysis")
     run.add_argument("--title", required=True)
     run.add_argument("--authors", default="")
     run.add_argument("--journal", default="WP")
@@ -39,9 +39,10 @@ def main() -> None:
     run.add_argument("--abstract", default="")
     run.add_argument("--content", help="Paper text, abstract, URL, or path to .pdf/.txt/.md")
     run.add_argument("--target-journal-logic", default="TAR-style")
+    run.add_argument("--relational", action="store_true", help="Use the old multi-database workflow")
     run.set_defaults(func=core.run_paper)
 
-    run_pdf = sub.add_parser("run-pdf", help="Upload-style pipeline: pass one PDF path or PDF URL and auto-detect metadata")
+    run_pdf = sub.add_parser("run-pdf", help="Upload-style single-page pipeline: one PDF becomes one Paper Bank page")
     run_pdf.add_argument("pdf", nargs="+", help="Local PDF path or PDF URL")
     run_pdf.add_argument("--title", help="Optional override if auto-detected title is bad")
     run_pdf.add_argument("--authors", default="")
@@ -50,6 +51,7 @@ def main() -> None:
     run_pdf.add_argument("--field", action="append", default=[])
     run_pdf.add_argument("--importance", type=int, default=3)
     run_pdf.add_argument("--target-journal-logic", default="TAR-style")
+    run_pdf.add_argument("--relational", action="store_true", help="Use the old multi-database workflow")
     run_pdf.set_defaults(func=core.run_pdf)
 
     run_folder = sub.add_parser("run-folder", help="Process every PDF in a folder with minimal metadata")

@@ -64,7 +64,6 @@ def polish_notion(args: Any) -> None:
         notion.update_data_source(ids[key], properties)
         print(f"Updated relations: {key}")
     parent_page_id = require(settings.notion_parent_page_id, "NOTION_PARENT_PAGE_ID")
-    _clean_parent_page(notion, parent_page_id)
     _repair_error_papers(notion, ids["paper_bank"])
     _dedupe_and_fix_papers(notion, ids)
     dashboard = _create_clean_dashboard(notion, parent_page_id, ids)
@@ -340,11 +339,13 @@ def run_paper(args: Any) -> dict[str, Any]:
     paper = add_paper(args)
     paper_id = paper["id"]
     try:
-        return _run_pipeline_for_paper(
-            paper=paper,
-            content=content,
-            target_journal_logic=getattr(args, "target_journal_logic", "TAR-style"),
-        )
+        if getattr(args, "relational", False):
+            return _run_pipeline_for_paper(
+                paper=paper,
+                content=content,
+                target_journal_logic=getattr(args, "target_journal_logic", "TAR-style"),
+            )
+        return _run_single_page_pipeline_for_paper(paper=paper, content=content)
     except Exception as exc:
         _record_processing_error(paper_id, exc)
         raise
@@ -376,6 +377,7 @@ def run_pdf(args: Any) -> dict[str, Any]:
             detected_title=metadata.get("title", ""),
             content=pdf,
             target_journal_logic=args.target_journal_logic,
+            relational=getattr(args, "relational", False),
         )
     )
 
@@ -435,6 +437,87 @@ def _run_pipeline_for_paper(paper: dict[str, Any], content: str, target_journal_
         "critiques": critiques,
         "advisor_memo": advisor_memo,
     }
+
+
+def _run_single_page_pipeline_for_paper(paper: dict[str, Any], content: str) -> dict[str, Any]:
+    settings = Settings()
+    notion = NotionClient(settings)
+    llm = LLMClient(settings)
+    paper_id = paper["id"]
+
+    paper_card = llm.complete(prompts.PAPER_CARD.format(content=content))
+    notion.append_markdown(paper_id, paper_card)
+    notion.update_page(
+        paper_id,
+        {
+            "Status": select_prop("Reading"),
+            "Pipeline Step": select_prop("Paper Card"),
+            "One-Sentence Summary": rich_text_prop(_first_section_line(paper_card, "One-Sentence Summary")),
+            "Research Question": rich_text_prop(_first_section_line(paper_card, "Research Question")),
+            "Key Takeaway": rich_text_prop(_first_section_line(paper_card, "Main Finding")),
+        },
+    )
+    print(f"Added Paper Card to paper: {paper_id}")
+
+    taste_memo = llm.complete(prompts.TASTE_MEMO.format(content=f"{content}\n\n{paper_card}"))
+    notion.append_markdown(paper_id, f"\n\n---\n\n# Taste Memo\n\n{taste_memo}")
+    notion.update_page(paper_id, {"Pipeline Step": select_prop("Taste Memo")})
+    print(f"Added Taste Memo to paper: {paper_id}")
+
+    idea_data = llm.json(prompts.IDEAS.format(content=taste_memo))
+    ideas = idea_data.get("ideas", [])[:3]
+    scored_ideas = []
+    idea_sections = ["\n\n---\n\n# Idea Extensions"]
+    for index, idea in enumerate(ideas, start=1):
+        idea_markdown = idea.get("body_markdown", "")
+        title = idea.get("title", f"Idea {index}")
+        score_data = llm.json(prompts.SCORE_IDEA.format(content=idea_markdown or str(idea)))
+        scores = {field: int(score_data.get("scores", {}).get(field, 0)) for field in SCORE_FIELDS}
+        decision = decision_for_scores(scores)
+        total = total_score(scores)
+        scored_ideas.append({"title": title, "scores": scores, "total": total, "decision": decision})
+        score_lines = "\n".join(f"- {field}: {value}" for field, value in scores.items())
+        idea_sections.append(
+            f"""## Idea {index}: {title}
+
+{idea_markdown}
+
+### Scorecard
+- Total Score: {total}
+- Decision: {decision}
+{score_lines}
+
+### Advisor-Style Note
+- Fatal flaw: {score_data.get("fatal_flaw", "")}
+- Best version: {score_data.get("best_version", "")}
+- Minimum data needed: {score_data.get("minimum_data_needed", "")}
+- Main empirical design: {score_data.get("main_empirical_design", "")}
+- One-sentence contribution: {score_data.get("one_sentence_contribution", "")}
+"""
+        )
+        print(f"Scored single-page idea {index}: {total} / {decision}")
+
+    notion.append_markdown(paper_id, "\n\n".join(idea_sections))
+    notion.update_page(paper_id, {"Status": select_prop("Processed"), "Pipeline Step": select_prop("Scored")})
+
+    promoted = [idea for idea in scored_ideas if idea["decision"] == "Promote"]
+    if promoted:
+        best = max(promoted, key=lambda item: item["total"])
+        proposal = llm.complete(prompts.MINI_PROPOSAL.format(content=str(best)))
+        referee_data = llm.json(prompts.REFEREE.format(content=proposal))
+        referee_markdown = "\n\n".join(item.get("body_markdown", "") for item in referee_data.get("critiques", []))
+        advisor_memo = llm.complete(prompts.ADVISOR_MEMO.format(content=proposal))
+        notion.append_markdown(
+            paper_id,
+            f"\n\n---\n\n# Mini Proposal\n\n{proposal}\n\n---\n\n# Referee Simulation\n\n{referee_markdown}\n\n---\n\n{advisor_memo}",
+        )
+        notion.update_page(paper_id, {"Pipeline Step": select_prop("Advisor Memo")})
+    else:
+        notion.append_markdown(
+            paper_id,
+            "\n\n---\n\n# Pipeline Stopped After Scoring\n\nNo idea met the Promote rule. This is expected; keep the paper as taste training unless you manually revive one idea.",
+        )
+    return {"paper": paper, "paper_card": paper_card, "taste_memo": taste_memo, "ideas": scored_ideas}
 
 
 def _record_processing_error(paper_id: str, exc: BaseException) -> None:
@@ -522,31 +605,38 @@ def _dedupe_and_fix_papers(notion: NotionClient, ids: dict[str, str]) -> None:
 
 
 def _create_clean_dashboard(notion: NotionClient, parent_page_id: str, ids: dict[str, str]) -> dict[str, Any]:
-    counts = {key: len(notion.query_database(value, {"page_size": 100}).get("results", [])) for key, value in ids.items()}
     dashboard = notion.create_child_page(
         parent_page_id,
-        "Research Taste OS - Clean Dashboard",
-        f"""# Research Taste OS - Clean Dashboard
+        "Research Taste OS - Simple",
+        """# Research Taste OS - Simple
 
-## What Matters Today
-- Paper records: {counts.get("paper_bank", 0)}
-- Taste memos: {counts.get("taste_memos", 0)}
-- Ideas generated: {counts.get("idea_bank", 0)}
-- Mini proposals: {counts.get("mini_proposals", 0)}
-- Referee critiques: {counts.get("referee_bank", 0)}
+## Main Rule
 
-## How To Use
+One paper should live in one Paper Bank page. Open the paper page and read downward:
+
+Paper Snapshot -> Paper Card -> Taste Memo -> Idea Extensions -> Scorecards -> Proposal if any.
+
+## How To Add Papers
+
 - One PDF: research-os run-pdf "/path/to/paper.pdf"
 - Folder: research-os run-folder "/path/to/folder" --limit 3
-- Do not run setup-notion again.
 
-## How To Interpret Results
-- Processed + Scored means the workflow reached idea scoring.
-- Mini Proposals appear only when at least one idea is scored Promote.
-- Archived rows are duplicate failed runs, hidden from the active workflow.
+## What To Ignore
+
+The older Taste Memo / Idea / Proposal databases are legacy relational storage. You do not need to use them for the simplified workflow.
 """,
     )
-    _create_dashboard_views(notion, dashboard["id"], ids)
+    try:
+        notion.create_linked_view(
+            dashboard["id"],
+            ids["paper_bank"],
+            "Paper Bank - Read Here",
+            "table",
+            {"property": "Status", "select": {"does_not_equal": "Archived"}},
+            [{"property": "Created Date", "direction": "descending"}],
+        )
+    except SystemExit as exc:
+        print(f"Could not create simple Paper Bank view: {exc}")
     return dashboard
 
 
