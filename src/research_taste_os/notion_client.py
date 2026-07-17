@@ -98,6 +98,10 @@ class NotionClient:
     def append_markdown(self, page_id: str, markdown: str) -> dict[str, Any]:
         page_id = normalize_notion_id(page_id)
         blocks = markdown_to_blocks(markdown)
+        return self.append_blocks(page_id, blocks)
+
+    def append_blocks(self, page_id: str, blocks: list[dict[str, Any]]) -> dict[str, Any]:
+        page_id = normalize_notion_id(page_id)
         result: dict[str, Any] = {}
         for offset in range(0, len(blocks), 100):
             result = self.request(
@@ -115,6 +119,10 @@ class NotionClient:
         page_id = normalize_notion_id(page_id)
         return self.request("GET", f"/pages/{page_id}")
 
+    def retrieve_data_source(self, data_source_id: str) -> dict[str, Any]:
+        data_source_id = normalize_notion_id(data_source_id)
+        return self.request("GET", f"/data_sources/{data_source_id}")
+
     def retrieve_block_children(self, block_id: str) -> list[dict[str, Any]]:
         block_id = normalize_notion_id(block_id)
         results: list[dict[str, Any]] = []
@@ -131,6 +139,9 @@ class NotionClient:
         data_source_id = normalize_notion_id(data_source_id)
         return self.request("POST", f"/data_sources/{data_source_id}/query", payload or {})
 
+    def search(self, query: str, page_size: int = 10) -> dict[str, Any]:
+        return self.request("POST", "/search", {"query": query, "page_size": page_size})
+
     def create_linked_view(
         self,
         parent_page_id: str,
@@ -139,6 +150,7 @@ class NotionClient:
         view_type: str = "table",
         filter_payload: dict[str, Any] | None = None,
         sorts: list[dict[str, Any]] | None = None,
+        properties: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "create_database": {
@@ -155,6 +167,8 @@ class NotionClient:
             payload["filter"] = filter_payload
         if sorts:
             payload["sorts"] = sorts
+        if properties:
+            payload["configuration"] = {"type": view_type, "properties": properties, "wrap_cells": True}
         return self.request("POST", "/views", payload)
 
     def page_text(self, page_id: str) -> str:

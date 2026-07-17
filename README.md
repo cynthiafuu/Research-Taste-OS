@@ -7,7 +7,7 @@ Notion-first MVP workflow for improving Accounting PhD research taste.
 The workflow is now simplified: **Paper Bank is the main interface**. Each PDF creates one Paper Bank page, and all generated analysis is appended inside that same page:
 
 ```text
-Paper Snapshot -> Paper Card -> Taste Memo -> Idea Extensions -> Scorecards -> Mini Proposal if any
+Paper Snapshot -> Paper Card -> Taste Memo -> Idea Extensions -> Scorecards -> My Judgment
 ```
 
 Use:
@@ -30,8 +30,9 @@ Paper Intake -> Paper Card -> Taste Memo -> Idea Extensions -> Idea Scoring -> M
 
 - Notion is the main interface and database.
 - Automation is manually triggered through the `research-os` CLI for reliability.
-- PDF parsing is intentionally minimal: paste paper text/abstracts or pass `.txt`/`.md` files.
-- The Notion API creates databases and properties, but saved Notion views may need to be created manually in the Notion UI.
+- Daily use is no-manual: pass a local PDF or PDF URL and let the CLI infer basic metadata.
+- The default workflow writes all analysis into the Paper Bank page for that paper.
+- `research-os ux-v2` rebuilds the simple Notion dashboard and creates a clean Paper Bank reading view.
 - Relation properties are added after database creation because Notion needs target database IDs first.
 
 ## Install
@@ -81,7 +82,7 @@ The smoke test creates one sample Paper, Taste Memo, Idea, Proposal, Critique, a
 
 ## No-Manual Mode
 
-Fastest path: pass one PDF file or PDF URL. The system guesses title/year, defaults to `journal=WP` and `field=Other`, then runs the whole pipeline.
+Fastest path: pass one PDF file or PDF URL. The system guesses title/year, defaults to `journal=WP` and `field=Other`, then writes the whole analysis into one Paper Bank page.
 
 ```bash
 research-os run-pdf ./papers/paper.pdf
@@ -99,6 +100,12 @@ For a folder of PDFs:
 
 ```bash
 research-os run-folder ./papers --limit 5
+```
+
+Refresh the Notion dashboard if the page ever feels messy:
+
+```bash
+research-os ux-v2
 ```
 
 Optional overrides are available only when the auto-detected metadata is bad:
@@ -156,14 +163,13 @@ What it does automatically:
 
 - Creates the Paper Bank entry.
 - Generates the Paper Card.
-- Creates the linked Taste Memo.
-- Generates exactly 3 idea extensions.
-- Scores all 3 ideas.
-- If any idea is `Promote`, picks the highest score and creates a Mini Proposal.
-- Runs Referee Simulation.
-- Appends an Advisor Memo.
+- Appends a color-coded Taste Memo.
+- Generates idea extensions inside the same paper page.
+- Scores the ideas with the 8-factor rubric.
+- Adds a `My Judgment` section for your own reading notes.
+- If any idea is `Promote`, appends Mini Proposal, Referee Simulation, and Advisor Memo sections.
 
-PDF support is intentionally simple: it reads extractable text from the first 40 pages. Scanned PDFs need OCR text first.
+PDF support reads extractable text from the first 40 pages. Scanned PDFs need OCR text first.
 
 If you prefer to add papers directly inside Notion, set `Status = Inbox`, then run:
 
@@ -234,36 +240,22 @@ Weekly review:
 research-os weekly-review
 ```
 
-## Notion Views To Add
+## Notion UX
 
-Create these simple views in Notion after setup:
+Use:
 
-Paper Bank:
-- `Inbox`: filter `Status = Inbox`
-- `Reading Queue`: filter `Status = Reading`, sort `Importance` descending
-- `Processed`: filter `Status = Processed`
+```bash
+research-os ux-v2
+```
 
-Taste Memos:
-- `Needs Review`: filter `Status = Draft`
-- `Useful Lessons`: filter `Status = Useful`, sort `Overall Taste Score` descending
+This rebuilds `Research Taste OS - Simple` as the daily reading entry point:
 
-Idea Bank:
-- `Raw Ideas`: filter `Stage = Raw`
-- `Promote/Revise`: filter `Decision is Promote or Revise`, sort `Total Score` descending
-- `Archived`: filter `Stage = Archived`
+- A short colored guide at the top.
+- A clean Paper Bank linked view with only the useful daily columns.
+- A Paper Page UX map explaining the color-coded sections.
+- A lightweight backfill that adds `My Judgment` to existing non-error paper pages if missing.
 
-Mini Proposals:
-- `Drafts`: filter `Status = Draft`
-- `Needs Revision`: filter `Status = Critiqued`
-- `Advisor Ready`: filter `Advisor Ready = checked`
-
-Referee Critiques:
-- `Open Major Issues`: filter `Status = Open` and `Severity is Fatal or Major`
-- `Addressed`: filter `Status = Addressed`
-
-Writing Bank:
-- `Reusable Lines`: filter `Reusable? = checked`, sort `Quality` descending
-- `Weekly Reviews`: filter `Source contains Research Taste OS weekly review`
+The old Taste Memos / Idea Bank / Mini Proposal / Referee / Writing databases are legacy storage. Keep them out of the daily workflow unless you deliberately run the older relational mode with `--relational`.
 
 ## Quality Gates
 

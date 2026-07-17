@@ -16,6 +16,9 @@ def main() -> None:
     sub.add_parser("polish-notion", help="Improve schemas, repair error rows, and append a readable dashboard").set_defaults(
         func=core.polish_notion
     )
+    sub.add_parser("ux-v2", help="Rebuild the simple Notion dashboard and apply visual Paper Page UX v2 defaults").set_defaults(
+        func=core.apply_ux_v2
+    )
 
     add = sub.add_parser("add-paper", help="Create a Paper Bank entry")
     add.add_argument("--title", required=True)

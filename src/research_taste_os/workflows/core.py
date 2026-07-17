@@ -21,8 +21,34 @@ from ..notion_client import (
     url_prop,
 )
 from ..schema import BASE_SCHEMAS, data_source_properties, relation_patches
+from ..utils.notion_blocks import bulleted, callout, divider, heading, paragraph, quote, todo
 from ..utils.pdf_text import infer_pdf_metadata, read_text_source
 from ..utils.scoring import SCORE_FIELDS, decision_for_scores, total_score
+
+SIMPLE_PAGE_TITLE = "Research Taste OS - Simple"
+SIMPLE_VIEW_NAME = "Paper Bank - Clean Reading View"
+SIMPLE_VIEW_VISIBLE_PROPERTIES = [
+    "Title",
+    "Status",
+    "Year",
+    "Field",
+    "Key Takeaway",
+    "Pipeline Step",
+]
+REBUILDABLE_SIMPLE_BLOCK_TYPES = {
+    "paragraph",
+    "heading_1",
+    "heading_2",
+    "heading_3",
+    "bulleted_list_item",
+    "numbered_list_item",
+    "to_do",
+    "quote",
+    "callout",
+    "divider",
+    "code",
+    "child_database",
+}
 
 
 def setup_notion() -> dict[str, str]:
@@ -71,6 +97,17 @@ def polish_notion(args: Any) -> None:
     print("Notion workspace polished.")
 
 
+def apply_ux_v2(args: Any) -> None:
+    settings = Settings()
+    notion = NotionClient(settings)
+    paper_bank_id = require(settings.paper_bank_db_id, "PAPER_BANK_DB_ID")
+    _ensure_paper_bank_schema(notion, paper_bank_id)
+    simple_page = _find_or_create_simple_page(notion, settings)
+    _rebuild_simple_dashboard(notion, simple_page["id"], paper_bank_id)
+    _backfill_existing_paper_pages_v2(notion, paper_bank_id)
+    print(f"Applied Notion UX v2: {simple_page.get('url', '')}")
+
+
 def add_paper(args: Any) -> dict[str, Any]:
     settings = Settings()
     notion = NotionClient(settings)
@@ -105,18 +142,17 @@ def _paper_intake_markdown(args: Any) -> str:
     source = getattr(args, "url", None) or getattr(args, "content", None) or "Not provided"
     abstract = getattr(args, "abstract", "")
     parts = [
-        "## Local Paper Snapshot",
+        "## Paper Snapshot",
         f"Title: {getattr(args, 'title', 'Untitled Paper')}",
         f"Authors: {getattr(args, 'authors', '') or 'Not detected'}",
         f"Year: {getattr(args, 'year', None) or 'Not detected'}",
         f"Field: {', '.join(getattr(args, 'field', []) or ['Other'])}",
-        "## Source",
-        str(source),
-        "## Processing Status",
-        "Created. Waiting for automated Paper Card generation.",
+        f"Source: {source}",
+        "## Reading Intent",
+        "Use this page to decide what this paper teaches about research taste, not just what it says.",
     ]
     if abstract:
-        parts.extend(["## Intake Notes", abstract])
+        parts.extend(["## Abstract", abstract])
     return "\n".join(parts)
 
 
@@ -446,28 +482,58 @@ def _run_single_page_pipeline_for_paper(paper: dict[str, Any], content: str) -> 
     paper_id = paper["id"]
 
     paper_card = llm.complete(prompts.PAPER_CARD.format(content=content))
-    notion.append_markdown(paper_id, paper_card)
+    summary = _first_section_line(paper_card, "One-Sentence Summary")
+    research_question = _first_section_line(paper_card, "Research Question")
+    main_finding = _first_section_line(paper_card, "Main Finding")
+    notion.append_blocks(
+        paper_id,
+        [
+            divider(),
+            callout(f"TL;DR: {summary or 'Paper card generated. Review the sections below.'}", "blue_background", "🔎"),
+            callout(f"Research question: {research_question or 'See Paper Card below.'}", "gray_background", "❓"),
+            heading(2, "Paper Card", "blue"),
+        ],
+    )
+    notion.append_markdown(paper_id, _strip_top_heading(paper_card, "Paper Card"))
     notion.update_page(
         paper_id,
         {
             "Status": select_prop("Reading"),
             "Pipeline Step": select_prop("Paper Card"),
-            "One-Sentence Summary": rich_text_prop(_first_section_line(paper_card, "One-Sentence Summary")),
-            "Research Question": rich_text_prop(_first_section_line(paper_card, "Research Question")),
-            "Key Takeaway": rich_text_prop(_first_section_line(paper_card, "Main Finding")),
+            "One-Sentence Summary": rich_text_prop(summary),
+            "Research Question": rich_text_prop(research_question),
+            "Key Takeaway": rich_text_prop(main_finding),
         },
     )
     print(f"Added Paper Card to paper: {paper_id}")
 
     taste_memo = llm.complete(prompts.TASTE_MEMO.format(content=f"{content}\n\n{paper_card}"))
-    notion.append_markdown(paper_id, f"\n\n---\n\n# Taste Memo\n\n{taste_memo}")
+    taste_lesson = _first_section_line(taste_memo, "What I Should Learn")
+    concern = _first_section_line(taste_memo, "Likely Referee Concerns")
+    notion.append_blocks(
+        paper_id,
+        [
+            divider(),
+            callout(f"Taste lesson: {taste_lesson or 'Review the memo below and write your own judgment.'}", "yellow_background", "🧭"),
+            callout(f"Likely referee concern: {concern or 'See memo below.'}", "orange_background", "⚠️"),
+            heading(2, "Taste Memo", "yellow"),
+        ],
+    )
+    notion.append_markdown(paper_id, taste_memo)
     notion.update_page(paper_id, {"Pipeline Step": select_prop("Taste Memo")})
     print(f"Added Taste Memo to paper: {paper_id}")
 
     idea_data = llm.json(prompts.IDEAS.format(content=taste_memo))
     ideas = idea_data.get("ideas", [])[:3]
     scored_ideas = []
-    idea_sections = ["\n\n---\n\n# Idea Extensions"]
+    notion.append_blocks(
+        paper_id,
+        [
+            divider(),
+            callout("Idea extensions are drafts, not commitments. Use the scorecards to decide what is worth revisiting.", "green_background", "🌱"),
+            heading(2, "Idea Extensions and Scorecards", "green"),
+        ],
+    )
     for index, idea in enumerate(ideas, start=1):
         idea_markdown = idea.get("body_markdown", "")
         title = idea.get("title", f"Idea {index}")
@@ -476,28 +542,30 @@ def _run_single_page_pipeline_for_paper(paper: dict[str, Any], content: str) -> 
         decision = decision_for_scores(scores)
         total = total_score(scores)
         scored_ideas.append({"title": title, "scores": scores, "total": total, "decision": decision})
-        score_lines = "\n".join(f"- {field}: {value}" for field, value in scores.items())
-        idea_sections.append(
-            f"""## Idea {index}: {title}
-
-{idea_markdown}
-
-### Scorecard
-- Total Score: {total}
-- Decision: {decision}
-{score_lines}
-
-### Advisor-Style Note
-- Fatal flaw: {score_data.get("fatal_flaw", "")}
-- Best version: {score_data.get("best_version", "")}
-- Minimum data needed: {score_data.get("minimum_data_needed", "")}
-- Main empirical design: {score_data.get("main_empirical_design", "")}
-- One-sentence contribution: {score_data.get("one_sentence_contribution", "")}
-"""
+        score_color = _score_color(decision, total)
+        notion.append_blocks(
+            paper_id,
+            [
+                heading(3, f"Idea {index}: {title}", "green"),
+                callout(f"Decision: {decision} | Total score: {total}/40", score_color, "📊"),
+            ],
+        )
+        notion.append_markdown(paper_id, idea_markdown)
+        score_lines = [bulleted(f"{field}: {value}") for field, value in scores.items()]
+        notion.append_blocks(
+            paper_id,
+            [
+                heading(3, "Scorecard", "gray"),
+                *score_lines,
+                quote(f"Fatal flaw: {score_data.get('fatal_flaw', '')}", "red_background"),
+                quote(f"Best version: {score_data.get('best_version', '')}", "green_background"),
+                quote(f"Minimum data needed: {score_data.get('minimum_data_needed', '')}", "yellow_background"),
+                quote(f"Main empirical design: {score_data.get('main_empirical_design', '')}", "blue_background"),
+                quote(f"One-sentence contribution: {score_data.get('one_sentence_contribution', '')}", "purple_background"),
+            ],
         )
         print(f"Scored single-page idea {index}: {total} / {decision}")
 
-    notion.append_markdown(paper_id, "\n\n".join(idea_sections))
     notion.update_page(paper_id, {"Status": select_prop("Processed"), "Pipeline Step": select_prop("Scored")})
 
     promoted = [idea for idea in scored_ideas if idea["decision"] == "Promote"]
@@ -507,17 +575,80 @@ def _run_single_page_pipeline_for_paper(paper: dict[str, Any], content: str) -> 
         referee_data = llm.json(prompts.REFEREE.format(content=proposal))
         referee_markdown = "\n\n".join(item.get("body_markdown", "") for item in referee_data.get("critiques", []))
         advisor_memo = llm.complete(prompts.ADVISOR_MEMO.format(content=proposal))
-        notion.append_markdown(
-            paper_id,
-            f"\n\n---\n\n# Mini Proposal\n\n{proposal}\n\n---\n\n# Referee Simulation\n\n{referee_markdown}\n\n---\n\n{advisor_memo}",
-        )
+        notion.append_blocks(paper_id, [divider(), callout("At least one idea met the Promote rule. Review before sharing.", "green_background", "✅"), heading(2, "Mini Proposal", "green")])
+        notion.append_markdown(paper_id, proposal)
+        notion.append_blocks(paper_id, [divider(), heading(2, "Referee Simulation", "red")])
+        notion.append_markdown(paper_id, referee_markdown)
+        notion.append_blocks(paper_id, [divider(), heading(2, "Advisor Memo", "blue")])
+        notion.append_markdown(paper_id, advisor_memo)
         notion.update_page(paper_id, {"Pipeline Step": select_prop("Advisor Memo")})
     else:
-        notion.append_markdown(
+        notion.append_blocks(
             paper_id,
-            "\n\n---\n\n# Pipeline Stopped After Scoring\n\nNo idea met the Promote rule. This is expected; keep the paper as taste training unless you manually revive one idea.",
+            [
+                divider(),
+                callout("No idea met the Promote rule. Keep this paper as taste training unless you manually revive one idea.", "red_background", "🛑"),
+            ],
         )
+    _append_my_judgment_section(notion, paper_id)
     return {"paper": paper, "paper_card": paper_card, "taste_memo": taste_memo, "ideas": scored_ideas}
+
+
+def _strip_top_heading(markdown: str, heading_text: str) -> str:
+    lines = markdown.splitlines()
+    if lines and lines[0].strip().lower() == f"## {heading_text}".lower():
+        return "\n".join(lines[1:]).strip()
+    if lines and lines[0].strip().lower() == f"# {heading_text}".lower():
+        return "\n".join(lines[1:]).strip()
+    return markdown
+
+
+def _score_color(decision: str, total: int) -> str:
+    if decision == "Promote":
+        return "green_background"
+    if decision == "Revise":
+        return "yellow_background"
+    if decision == "Hold":
+        return "orange_background"
+    if total == 0:
+        return "gray_background"
+    return "red_background"
+
+
+def _append_my_judgment_section(notion: NotionClient, paper_id: str) -> None:
+    notion.append_blocks(
+        paper_id,
+        [
+            divider(),
+            heading(2, "My Judgment", "purple"),
+            callout("This is the human part. Fill this in after reading; it is where research taste actually improves.", "purple_background", "✍️"),
+            todo("What surprised me?", False),
+            todo("What do I disagree with?", False),
+            todo("What design choice can I steal?", False),
+            todo("Would I build on this paper? Why or why not?", False),
+            todo("One advisor question I would ask:", False),
+        ],
+    )
+
+
+def _backfill_existing_paper_pages_v2(notion: NotionClient, paper_bank_id: str) -> None:
+    data = notion.query_database(
+        paper_bank_id,
+        {
+            "page_size": 50,
+            "filter": {"property": "Status", "select": {"does_not_equal": "Archived"}},
+        },
+    )
+    for page in data.get("results", []):
+        status = _select_value(page.get("properties", {}).get("Status"))
+        if status == "Error":
+            continue
+        body = notion.page_text(page["id"])
+        if "My Judgment" in body:
+            continue
+        _append_my_judgment_section(notion, page["id"])
+        title = _page_title(page, "Title") or page["id"]
+        print(f"Backfilled My Judgment section: {title}")
 
 
 def _record_processing_error(paper_id: str, exc: BaseException) -> None:
@@ -607,8 +738,8 @@ def _dedupe_and_fix_papers(notion: NotionClient, ids: dict[str, str]) -> None:
 def _create_clean_dashboard(notion: NotionClient, parent_page_id: str, ids: dict[str, str]) -> dict[str, Any]:
     dashboard = notion.create_child_page(
         parent_page_id,
-        "Research Taste OS - Simple",
-        """# Research Taste OS - Simple
+        SIMPLE_PAGE_TITLE,
+        f"""# {SIMPLE_PAGE_TITLE}
 
 ## Main Rule
 
@@ -638,6 +769,118 @@ The older Taste Memo / Idea / Proposal databases are legacy relational storage. 
     except SystemExit as exc:
         print(f"Could not create simple Paper Bank view: {exc}")
     return dashboard
+
+
+def _ensure_paper_bank_schema(notion: NotionClient, paper_bank_id: str) -> None:
+    _, properties = BASE_SCHEMAS["paper_bank"]
+    title_name = next((name for name, definition in properties.items() if "title" in definition), None)
+    non_title = {name: definition for name, definition in properties.items() if name != title_name}
+    notion.update_data_source(paper_bank_id, non_title)
+
+
+def _find_or_create_simple_page(notion: NotionClient, settings: Settings) -> dict[str, Any]:
+    for result in notion.search(SIMPLE_PAGE_TITLE, page_size=25).get("results", []):
+        if result.get("object") == "page" and not result.get("in_trash") and _any_title(result) == SIMPLE_PAGE_TITLE:
+            return result
+    parent_page_id = require(settings.notion_parent_page_id, "NOTION_PARENT_PAGE_ID")
+    return notion.create_child_page(parent_page_id, SIMPLE_PAGE_TITLE)
+
+
+def _rebuild_simple_dashboard(notion: NotionClient, page_id: str, paper_bank_id: str) -> None:
+    _clear_simple_dashboard(notion, page_id)
+    notion.append_blocks(
+        page_id,
+        [
+            heading(1, SIMPLE_PAGE_TITLE, "blue"),
+            callout(
+                "主原则：一篇论文只进 Paper Bank 一行；真正的分析都沉淀在这篇论文自己的页面里。",
+                "blue_background",
+                "🎯",
+            ),
+            callout(
+                "阅读路径：PDF -> Paper Card -> Taste Memo -> Idea Extensions -> Scorecards -> My Judgment。",
+                "gray_background",
+                "🧭",
+            ),
+            heading(2, "How To Add Papers", "gray"),
+            paragraph('单篇论文：research-os run-pdf "/完整路径/paper.pdf"'),
+            paragraph('文件夹批量：research-os run-folder "/完整路径/Literature" --limit 3'),
+            callout("不要再跑 setup-notion；它会重新建一套旧数据库。日常只用 run-pdf、run-folder、ux-v2。", "red_background", "⚠️"),
+            divider(),
+            heading(2, "Paper Bank", "green"),
+            callout(
+                "这里保持轻量：只看标题、状态、年份、领域、关键 takeaway 和当前 pipeline step。打开论文行，向下读完整分析。",
+                "green_background",
+                "📚",
+            ),
+        ],
+    )
+    _create_clean_paper_view(notion, page_id, paper_bank_id)
+    notion.append_blocks(
+        page_id,
+        [
+            divider(),
+            heading(2, "Paper Page UX v2", "purple"),
+            callout("Blue = paper facts. Yellow = taste judgment. Green = idea extensions. Red = risks. Purple = your own judgment.", "purple_background", "🎨"),
+            bulleted("Paper Card: 快速知道论文问什么、怎么做、发现什么。"),
+            bulleted("Taste Memo: 判断这篇论文为什么有味道，或者哪里不够有味道。"),
+            bulleted("Idea Extensions: 不急着做项目，只先练习“能不能延展”。"),
+            bulleted("Scorecards: 用分数逼自己说清楚这个 idea 为什么值得或不值得。"),
+            bulleted("My Judgment: 你读完后亲自填的部分，这是整个系统最重要的地方。"),
+        ],
+    )
+
+
+def _clear_simple_dashboard(notion: NotionClient, page_id: str) -> None:
+    for block in notion.retrieve_block_children(page_id):
+        if block.get("type") not in REBUILDABLE_SIMPLE_BLOCK_TYPES:
+            continue
+        try:
+            notion.archive_block(block["id"])
+        except SystemExit as exc:
+            print(f"Could not archive old dashboard block {block.get('id')}: {exc}")
+
+
+def _create_clean_paper_view(notion: NotionClient, page_id: str, paper_bank_id: str) -> None:
+    filter_payload = {"property": "Status", "select": {"does_not_equal": "Archived"}}
+    sorts = [{"property": "Created Date", "direction": "descending"}]
+    try:
+        notion.create_linked_view(
+            page_id,
+            paper_bank_id,
+            SIMPLE_VIEW_NAME,
+            "table",
+            filter_payload,
+            sorts,
+            _view_property_visibility(notion, paper_bank_id, SIMPLE_VIEW_VISIBLE_PROPERTIES),
+        )
+        print(f"Created clean Paper Bank view: {SIMPLE_VIEW_NAME}")
+    except SystemExit as exc:
+        print(f"Could not create configured clean view, retrying with default columns: {exc}")
+        try:
+            notion.create_linked_view(page_id, paper_bank_id, SIMPLE_VIEW_NAME, "table", filter_payload, sorts)
+            print(f"Created clean Paper Bank view without column hiding: {SIMPLE_VIEW_NAME}")
+        except SystemExit as fallback_exc:
+            print(f"Could not create clean Paper Bank view: {fallback_exc}")
+
+
+def _view_property_visibility(notion: NotionClient, data_source_id: str, visible_names: list[str]) -> list[dict[str, Any]]:
+    properties = notion.retrieve_data_source(data_source_id).get("properties", {})
+    visible = set(visible_names)
+    ordered_names = [name for name in visible_names if name in properties]
+    ordered_names.extend(name for name in properties if name not in visible)
+    return [
+        {"property_id": properties[name]["id"], "visible": name in visible}
+        for name in ordered_names
+        if properties.get(name, {}).get("id")
+    ]
+
+
+def _any_title(page: dict[str, Any]) -> str:
+    for prop in page.get("properties", {}).values():
+        if prop.get("type") == "title":
+            return "".join(part.get("plain_text", "") for part in prop.get("title", []))
+    return ""
 
 
 def _append_dashboard(notion: NotionClient, parent_page_id: str, ids: dict[str, str]) -> None:

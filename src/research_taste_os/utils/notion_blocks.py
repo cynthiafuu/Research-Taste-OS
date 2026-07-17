@@ -9,13 +9,33 @@ def paragraph(text: str) -> dict:
     return {"object": "block", "type": "paragraph", "paragraph": {"rich_text": rich_text(text)}}
 
 
-def heading(level: int, text: str) -> dict:
+def heading(level: int, text: str, color: str = "default") -> dict:
     block_type = f"heading_{min(max(level, 1), 3)}"
-    return {"object": "block", "type": block_type, block_type: {"rich_text": rich_text(text)}}
+    return {"object": "block", "type": block_type, block_type: {"rich_text": rich_text(text), "color": color}}
 
 
 def bulleted(text: str) -> dict:
     return {"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {"rich_text": rich_text(text)}}
+
+
+def divider() -> dict:
+    return {"object": "block", "type": "divider", "divider": {}}
+
+
+def callout(text: str, color: str = "gray_background", icon: str = "📌") -> dict:
+    return {
+        "object": "block",
+        "type": "callout",
+        "callout": {"rich_text": rich_text(text), "icon": {"type": "emoji", "emoji": icon}, "color": color},
+    }
+
+
+def quote(text: str, color: str = "default") -> dict:
+    return {"object": "block", "type": "quote", "quote": {"rich_text": rich_text(text), "color": color}}
+
+
+def todo(text: str, checked: bool = False) -> dict:
+    return {"object": "block", "type": "to_do", "to_do": {"rich_text": rich_text(text), "checked": checked}}
 
 
 def markdown_to_blocks(markdown: str) -> list[dict]:
