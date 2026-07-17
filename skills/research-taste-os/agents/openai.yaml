@@ -1,0 +1,4 @@
+interface:
+  display_name: "Research Taste OS"
+  short_description: "Run the Notion-first research taste workflow"
+  default_prompt: "Use $research-taste-os to process a paper PDF into my Notion Research Taste OS."

@@ -280,6 +280,18 @@ They cover:
 - Advisor Memo drafting
 - Weekly review
 
+## Codex Skill
+
+This repo includes a reusable Codex skill at [skills/research-taste-os/SKILL.md](</Users/sylviafu/APP I created/research workflow-p0/skills/research-taste-os/SKILL.md>).
+
+To install it locally:
+
+```bash
+cp -R skills/research-taste-os ~/.codex/skills/
+```
+
+The skill teaches Codex to operate the Notion-first Research Taste OS workflow, keep Notion output English-only, and use the simplified Paper Bank flow.
+
 ## Files
 
 - [src/research_taste_os/schema.py](</Users/sylviafu/APP I created/research workflow-p0/src/research_taste_os/schema.py>): Notion database schemas.
