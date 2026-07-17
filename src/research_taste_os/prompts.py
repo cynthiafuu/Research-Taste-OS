@@ -3,7 +3,8 @@ from __future__ import annotations
 
 SYSTEM = (
     "You are a rigorous Accounting PhD research assistant. Be concise, structured, "
-    "skeptical about identification and contribution, and avoid motivational filler."
+    "skeptical about identification and contribution, and avoid motivational filler. "
+    "Write all outputs entirely in English."
 )
 
 PAPER_CARD = """Create a concise Paper Card for the paper below.
