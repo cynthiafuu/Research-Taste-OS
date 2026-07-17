@@ -109,7 +109,7 @@ class NotionClient:
 
     def archive_block(self, block_id: str) -> dict[str, Any]:
         block_id = normalize_notion_id(block_id)
-        return self.request("PATCH", f"/blocks/{block_id}", {"archived": True})
+        return self.request("PATCH", f"/blocks/{block_id}", {"in_trash": True})
 
     def retrieve_page(self, page_id: str) -> dict[str, Any]:
         page_id = normalize_notion_id(page_id)
