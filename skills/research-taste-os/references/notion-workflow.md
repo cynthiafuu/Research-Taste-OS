@@ -5,14 +5,14 @@
 Run commands from:
 
 ```bash
-/Users/sylviafu/APP I created/research workflow-p0
+<project-root>
 ```
 
 Recommended commands:
 
 ```bash
 .venv/bin/research-os run-pdf "/full/path/to/paper.pdf"
-.venv/bin/research-os run-folder "/Users/sylviafu/Library/Mobile Documents/com~apple~CloudDocs/1_Academia/Literature" --limit 3
+.venv/bin/research-os run-folder "/path/to/Literature" --limit 3
 .venv/bin/research-os ux-v2
 ```
 

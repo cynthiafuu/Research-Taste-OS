@@ -267,7 +267,7 @@ The old Taste Memos / Idea Bank / Mini Proposal / Referee / Writing databases ar
 
 ## Prompt Templates
 
-Prompt templates live in [src/research_taste_os/prompts.py](</Users/sylviafu/APP I created/research workflow-p0/src/research_taste_os/prompts.py>).
+Prompt templates live in [src/research_taste_os/prompts.py](src/research_taste_os/prompts.py).
 
 They cover:
 
@@ -282,7 +282,7 @@ They cover:
 
 ## Codex Skill
 
-This repo includes a reusable Codex skill at [skills/research-taste-os/SKILL.md](</Users/sylviafu/APP I created/research workflow-p0/skills/research-taste-os/SKILL.md>).
+This repo includes a reusable Codex skill at [skills/research-taste-os/SKILL.md](skills/research-taste-os/SKILL.md).
 
 To install it locally:
 
@@ -294,10 +294,10 @@ The skill teaches Codex to operate the Notion-first Research Taste OS workflow, 
 
 ## Files
 
-- [src/research_taste_os/schema.py](</Users/sylviafu/APP I created/research workflow-p0/src/research_taste_os/schema.py>): Notion database schemas.
-- [src/research_taste_os/notion_client.py](</Users/sylviafu/APP I created/research workflow-p0/src/research_taste_os/notion_client.py>): Notion API wrapper.
-- [src/research_taste_os/workflows/core.py](</Users/sylviafu/APP I created/research workflow-p0/src/research_taste_os/workflows/core.py>): workflow actions.
-- [src/research_taste_os/cli.py](</Users/sylviafu/APP I created/research workflow-p0/src/research_taste_os/cli.py>): command-line entry point.
+- [src/research_taste_os/schema.py](src/research_taste_os/schema.py): Notion database schemas.
+- [src/research_taste_os/notion_client.py](src/research_taste_os/notion_client.py): Notion API wrapper.
+- [src/research_taste_os/workflows/core.py](src/research_taste_os/workflows/core.py): workflow actions.
+- [src/research_taste_os/cli.py](src/research_taste_os/cli.py): command-line entry point.
 
 ## Future Upgrades
 

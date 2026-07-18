@@ -20,7 +20,7 @@ Use this skill to operate the user's Notion-first research taste workflow. The d
 Default local project:
 
 ```bash
-/Users/sylviafu/APP I created/research workflow-p0
+<project-root>
 ```
 
 If that path is missing, search for a repo containing `pyproject.toml`, `src/research_taste_os/cli.py`, and `README.md`.
