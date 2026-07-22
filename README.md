@@ -163,13 +163,14 @@ What it does automatically:
 
 - Creates the Paper Bank entry.
 - Generates the Paper Card.
+- Extracts Research Mechanics: topic, method, contribution type, key formula/model, core variables, and data setting.
 - Appends a color-coded Taste Memo.
 - Generates idea extensions inside the same paper page.
 - Scores the ideas with the 8-factor rubric.
 - Adds a `My Judgment` section for your own reading notes.
 - If any idea is `Promote`, appends Mini Proposal, Referee Simulation, and Advisor Memo sections.
 
-PDF support reads extractable text from the first 40 pages. Scanned PDFs need OCR text first.
+PDF support reads extractable text from the first 40 pages. If `pdfplumber` is installed, the extractor also uses it as an optional helper for formula/table-heavy pages; otherwise it safely falls back to `pypdf`. Scanned PDFs need OCR text first.
 
 If you prefer to add papers directly inside Notion, set `Status = Inbox`, then run:
 
@@ -251,7 +252,8 @@ research-os ux-v2
 This rebuilds `Research Taste OS - Simple` as the daily reading entry point:
 
 - A short colored guide at the top.
-- A clean Paper Bank linked view with only the useful daily columns.
+- A clean Paper Bank linked view with useful daily columns.
+- Topic and Method lenses for browsing papers by research topic, empirical method, contribution type, formula/model, and data setting.
 - A Paper Page UX map explaining the color-coded sections.
 - A lightweight backfill that adds `My Judgment` to existing non-error paper pages if missing.
 
@@ -272,6 +274,7 @@ Prompt templates live in [src/research_taste_os/prompts.py](src/research_taste_o
 They cover:
 
 - Paper Card extraction
+- Research Mechanics extraction for formulas, contribution, topic tags, and method tags
 - Taste Memo drafting
 - Idea generation
 - 8-factor idea scoring

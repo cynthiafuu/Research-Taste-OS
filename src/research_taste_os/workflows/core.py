@@ -20,8 +20,8 @@ from ..notion_client import (
     title_prop,
     url_prop,
 )
-from ..schema import BASE_SCHEMAS, data_source_properties, relation_patches
-from ..utils.notion_blocks import bulleted, callout, divider, heading, paragraph, quote, todo
+from ..schema import BASE_SCHEMAS, CONTRIBUTION_TYPES, METHODS, RESEARCH_TOPICS, data_source_properties, relation_patches
+from ..utils.notion_blocks import bulleted, callout, code_block, divider, heading, paragraph, quote, todo
 from ..utils.pdf_text import infer_pdf_metadata, read_text_source
 from ..utils.scoring import SCORE_FIELDS, decision_for_scores, total_score
 
@@ -30,10 +30,28 @@ SIMPLE_VIEW_NAME = "Paper Bank - Clean Reading View"
 SIMPLE_VIEW_VISIBLE_PROPERTIES = [
     "Title",
     "Status",
+    "Research Topic",
+    "Method",
+    "Contribution Type",
+    "Key Contribution",
     "Year",
-    "Field",
-    "Key Takeaway",
     "Pipeline Step",
+]
+TOPIC_VIEW_VISIBLE_PROPERTIES = [
+    "Title",
+    "Research Topic",
+    "Contribution Type",
+    "Key Contribution",
+    "Year",
+    "Status",
+]
+METHOD_VIEW_VISIBLE_PROPERTIES = [
+    "Title",
+    "Method",
+    "Formula/Model",
+    "Core Variables",
+    "Data/Setting",
+    "Status",
 ]
 REBUILDABLE_SIMPLE_BLOCK_TYPES = {
     "paragraph",
@@ -130,6 +148,13 @@ def add_paper(args: Any) -> dict[str, Any]:
             "One-Sentence Summary": rich_text_prop(_one_sentence_from_abstract(getattr(args, "abstract", ""))),
             "Research Question": rich_text_prop("Pending AI extraction"),
             "Key Takeaway": rich_text_prop("Pending AI extraction"),
+            "Research Topic": multi_select_prop([]),
+            "Method": multi_select_prop([]),
+            "Contribution Type": multi_select_prop([]),
+            "Key Contribution": rich_text_prop("Pending AI extraction"),
+            "Formula/Model": rich_text_prop("Pending AI extraction"),
+            "Core Variables": rich_text_prop("Pending AI extraction"),
+            "Data/Setting": rich_text_prop("Pending AI extraction"),
             "Error Message": rich_text_prop(""),
         },
         _paper_intake_markdown(args),
@@ -178,10 +203,44 @@ def generate_paper_card(args: Any) -> str:
             "One-Sentence Summary": rich_text_prop(_first_section_line(markdown, "One-Sentence Summary")),
             "Research Question": rich_text_prop(_first_section_line(markdown, "Research Question")),
             "Key Takeaway": rich_text_prop(_first_section_line(markdown, "Main Finding")),
+            "Key Contribution": rich_text_prop(_first_section_line(markdown, "Contribution")),
+            "Formula/Model": rich_text_prop(_first_section_line(markdown, "Key Formula or Empirical Model")),
+            "Core Variables": rich_text_prop(_first_section_line(markdown, "Core Variables")),
         },
     )
     print(f"Added Paper Card to paper: {args.paper_id}")
     return markdown
+
+
+def enhance_paper(args: Any) -> dict[str, Any]:
+    settings = Settings()
+    notion = NotionClient(settings)
+    llm = LLMClient(settings)
+    content = read_text_source(args.content) or notion.page_text(args.paper_id)
+    if not content:
+        raise SystemExit("Give --content or use a paper page that already has readable text.")
+    paper_card = llm.complete(prompts.PAPER_CARD.format(content=content))
+    notion.append_blocks(
+        args.paper_id,
+        [
+            divider(),
+            callout("Extraction v2 refresh: Paper Card and Research Mechanics were regenerated from the available content.", "blue_background", "🔁"),
+            heading(2, "Paper Card", "blue"),
+        ],
+    )
+    notion.append_markdown(args.paper_id, _strip_top_heading(paper_card, "Paper Card"))
+    mechanics = _extract_and_append_research_mechanics(notion, llm, args.paper_id, content, paper_card)
+    notion.update_page(
+        args.paper_id,
+        {
+            "Status": select_prop("Reading"),
+            "One-Sentence Summary": rich_text_prop(_first_section_line(paper_card, "One-Sentence Summary")),
+            "Research Question": rich_text_prop(_first_section_line(paper_card, "Research Question")),
+            "Key Takeaway": rich_text_prop(_first_section_line(paper_card, "Main Finding")),
+        },
+    )
+    print(f"Enhanced paper extraction: {args.paper_id}")
+    return {"paper_card": paper_card, "mechanics": mechanics}
 
 
 def generate_taste_memo(args: Any) -> dict[str, Any]:
@@ -503,9 +562,14 @@ def _run_single_page_pipeline_for_paper(paper: dict[str, Any], content: str) -> 
             "One-Sentence Summary": rich_text_prop(summary),
             "Research Question": rich_text_prop(research_question),
             "Key Takeaway": rich_text_prop(main_finding),
+            "Key Contribution": rich_text_prop(_first_section_line(paper_card, "Contribution")),
+            "Formula/Model": rich_text_prop(_first_section_line(paper_card, "Key Formula or Empirical Model")),
+            "Core Variables": rich_text_prop(_first_section_line(paper_card, "Core Variables")),
         },
     )
     print(f"Added Paper Card to paper: {paper_id}")
+
+    mechanics = _extract_and_append_research_mechanics(notion, llm, paper_id, content, paper_card)
 
     taste_memo = llm.complete(prompts.TASTE_MEMO.format(content=f"{content}\n\n{paper_card}"))
     taste_lesson = _first_section_line(taste_memo, "What I Should Learn")
@@ -591,7 +655,107 @@ def _run_single_page_pipeline_for_paper(paper: dict[str, Any], content: str) -> 
             ],
         )
     _append_my_judgment_section(notion, paper_id)
-    return {"paper": paper, "paper_card": paper_card, "taste_memo": taste_memo, "ideas": scored_ideas}
+    return {"paper": paper, "paper_card": paper_card, "mechanics": mechanics, "taste_memo": taste_memo, "ideas": scored_ideas}
+
+
+def _extract_and_append_research_mechanics(
+    notion: NotionClient,
+    llm: LLMClient,
+    paper_id: str,
+    content: str,
+    paper_card: str,
+) -> dict[str, Any]:
+    data = llm.json(prompts.EXTRACTION_V2.format(content=content, paper_card=paper_card))
+    topics = _allowed_multi_select(data.get("research_topic"), RESEARCH_TOPICS)
+    methods = _allowed_multi_select(data.get("method"), METHODS)
+    contribution_types = _allowed_multi_select(data.get("contribution_type"), CONTRIBUTION_TYPES)
+    key_contribution = _clean_extracted_text(data.get("key_contribution"))
+    formula_or_model = _clean_extracted_text(data.get("formula_or_model"))
+    core_variables = _clean_extracted_text(data.get("core_variables"))
+    data_setting = _clean_extracted_text(data.get("data_setting"))
+    identification_summary = _clean_extracted_text(data.get("identification_summary"))
+    mechanism_summary = _clean_extracted_text(data.get("mechanism_summary"))
+    rationale = _clean_extracted_text(data.get("classification_rationale"))
+    notion.append_blocks(
+        paper_id,
+        [
+            divider(),
+            heading(2, "Research Mechanics", "blue"),
+            callout(f"Topics: {', '.join(topics or ['Other'])}", "blue_background", "🏷️"),
+            callout(f"Methods: {', '.join(methods or ['Other'])}", "gray_background", "🧪"),
+            callout(f"Contribution type: {', '.join(contribution_types or ['Other'])}", "purple_background", "🧩"),
+            quote(f"Key contribution: {key_contribution or 'Not clearly detected'}", "purple_background"),
+        ],
+    )
+    if _has_detected_content(formula_or_model):
+        notion.append_blocks(
+            paper_id,
+            [
+                heading(3, "Key Formula or Empirical Model", "gray"),
+                code_block(formula_or_model),
+            ],
+        )
+    body_markdown = data.get("body_markdown", "")
+    if body_markdown:
+        notion.append_markdown(paper_id, _strip_top_heading(body_markdown, "Research Mechanics"))
+    if rationale:
+        notion.append_blocks(paper_id, [quote(f"Classification rationale: {rationale}", "gray_background")])
+    notion.update_page(
+        paper_id,
+        {
+            "Research Topic": multi_select_prop(topics),
+            "Method": multi_select_prop(methods),
+            "Contribution Type": multi_select_prop(contribution_types),
+            "Key Contribution": rich_text_prop(key_contribution),
+            "Formula/Model": rich_text_prop(formula_or_model),
+            "Core Variables": rich_text_prop(core_variables),
+            "Data/Setting": rich_text_prop(data_setting),
+            "Pipeline Step": select_prop("Paper Card"),
+        },
+    )
+    print(f"Added Research Mechanics to paper: {paper_id}")
+    return {
+        "research_topic": topics,
+        "method": methods,
+        "contribution_type": contribution_types,
+        "key_contribution": key_contribution,
+        "formula_or_model": formula_or_model,
+        "core_variables": core_variables,
+        "data_setting": data_setting,
+        "identification_summary": identification_summary,
+        "mechanism_summary": mechanism_summary,
+    }
+
+
+def _allowed_multi_select(raw_values: Any, allowed_values: list[str]) -> list[str]:
+    if isinstance(raw_values, str):
+        values = [part.strip() for part in re.split(r"[,;/]", raw_values) if part.strip()]
+    elif isinstance(raw_values, list):
+        values = [str(value).strip() for value in raw_values if str(value).strip()]
+    else:
+        values = []
+    lookup = {value.lower(): value for value in allowed_values}
+    cleaned = []
+    for value in values:
+        canonical = lookup.get(value.lower())
+        if canonical and canonical not in cleaned:
+            cleaned.append(canonical)
+    return cleaned or ["Other"]
+
+
+def _clean_extracted_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        value = "; ".join(str(part).strip() for part in value if str(part).strip())
+    return re.sub(r"\s+", " ", str(value)).strip()[:2000]
+
+
+def _has_detected_content(value: str) -> bool:
+    clean = value.strip().lower()
+    if not clean:
+        return False
+    return clean not in {"not clearly detected", "none detected", "not detected", "n/a", "na"}
 
 
 def _strip_top_heading(markdown: str, heading_text: str) -> str:
@@ -779,14 +943,31 @@ def _ensure_paper_bank_schema(notion: NotionClient, paper_bank_id: str) -> None:
 
 
 def _find_or_create_simple_page(notion: NotionClient, settings: Settings) -> dict[str, Any]:
+    fallback_page: dict[str, Any] | None = None
     for result in notion.search(SIMPLE_PAGE_TITLE, page_size=25).get("results", []):
-        if result.get("object") == "page" and not result.get("in_trash") and _any_title(result) == SIMPLE_PAGE_TITLE:
+        if not _usable_page(result):
+            continue
+        title = _any_title(result).strip()
+        if title == SIMPLE_PAGE_TITLE:
             return result
+        if title == "Research Taste OS" and fallback_page is None:
+            fallback_page = result
+    if fallback_page:
+        return fallback_page
     parent_page_id = require(settings.notion_parent_page_id, "NOTION_PARENT_PAGE_ID")
+    parent = notion.retrieve_page(parent_page_id)
+    if parent.get("in_trash") or parent.get("archived"):
+        raise SystemExit(
+            "NOTION_PARENT_PAGE_ID points to a trashed/archived Notion page. Restore it or set NOTION_PARENT_PAGE_ID to an active page."
+        )
     return notion.create_child_page(parent_page_id, SIMPLE_PAGE_TITLE)
 
 
 def _rebuild_simple_dashboard(notion: NotionClient, page_id: str, paper_bank_id: str) -> None:
+    try:
+        notion.update_page(page_id, {"title": title_prop(SIMPLE_PAGE_TITLE)})
+    except SystemExit:
+        pass
     _clear_simple_dashboard(notion, page_id)
     notion.append_blocks(
         page_id,
@@ -809,7 +990,7 @@ def _rebuild_simple_dashboard(notion: NotionClient, page_id: str, paper_bank_id:
             divider(),
             heading(2, "Paper Bank", "green"),
             callout(
-                "Keep this view lightweight: title, status, year, field, key takeaway, and pipeline step. Open a paper row and read downward for the full analysis.",
+                "Keep this view lightweight: title, status, research topic, method, contribution type, key contribution, and pipeline step. Open a paper row and read downward for the full analysis.",
                 "green_background",
                 "📚",
             ),
@@ -820,9 +1001,24 @@ def _rebuild_simple_dashboard(notion: NotionClient, page_id: str, paper_bank_id:
         page_id,
         [
             divider(),
+            heading(2, "Browse by Topic and Method", "green"),
+            callout(
+                "Use these lenses to compare papers by research topic, empirical method, contribution type, formulas/models, and data setting without leaving Paper Bank.",
+                "green_background",
+                "🗂️",
+            ),
+        ],
+    )
+    _create_paper_management_view(notion, page_id, paper_bank_id, "Topic and Contribution Lens", TOPIC_VIEW_VISIBLE_PROPERTIES)
+    _create_paper_management_view(notion, page_id, paper_bank_id, "Method and Model Lens", METHOD_VIEW_VISIBLE_PROPERTIES)
+    notion.append_blocks(
+        page_id,
+        [
+            divider(),
             heading(2, "Paper Page UX v2", "purple"),
             callout("Blue = paper facts. Yellow = taste judgment. Green = idea extensions. Red = risks. Purple = your own judgment.", "purple_background", "🎨"),
             bulleted("Paper Card: quickly identify the question, design, and main finding."),
+            bulleted("Research Mechanics: extract topic, method, contribution type, formula/model, variables, and data setting."),
             bulleted("Taste Memo: judge why the paper works, or why it lacks research taste."),
             bulleted("Idea Extensions: practice extension thinking before committing to a project."),
             bulleted("Scorecards: force a concrete judgment about whether an idea is worth pursuing."),
@@ -842,26 +1038,36 @@ def _clear_simple_dashboard(notion: NotionClient, page_id: str) -> None:
 
 
 def _create_clean_paper_view(notion: NotionClient, page_id: str, paper_bank_id: str) -> None:
+    _create_paper_management_view(notion, page_id, paper_bank_id, SIMPLE_VIEW_NAME, SIMPLE_VIEW_VISIBLE_PROPERTIES)
+
+
+def _create_paper_management_view(
+    notion: NotionClient,
+    page_id: str,
+    paper_bank_id: str,
+    view_name: str,
+    visible_properties: list[str],
+) -> None:
     filter_payload = {"property": "Status", "select": {"does_not_equal": "Archived"}}
     sorts = [{"property": "Created Date", "direction": "descending"}]
     try:
         notion.create_linked_view(
             page_id,
             paper_bank_id,
-            SIMPLE_VIEW_NAME,
+            view_name,
             "table",
             filter_payload,
             sorts,
-            _view_property_visibility(notion, paper_bank_id, SIMPLE_VIEW_VISIBLE_PROPERTIES),
+            _view_property_visibility(notion, paper_bank_id, visible_properties),
         )
-        print(f"Created clean Paper Bank view: {SIMPLE_VIEW_NAME}")
+        print(f"Created Paper Bank view: {view_name}")
     except SystemExit as exc:
-        print(f"Could not create configured clean view, retrying with default columns: {exc}")
+        print(f"Could not create configured view {view_name}, retrying with default columns: {exc}")
         try:
-            notion.create_linked_view(page_id, paper_bank_id, SIMPLE_VIEW_NAME, "table", filter_payload, sorts)
-            print(f"Created clean Paper Bank view without column hiding: {SIMPLE_VIEW_NAME}")
+            notion.create_linked_view(page_id, paper_bank_id, view_name, "table", filter_payload, sorts)
+            print(f"Created Paper Bank view without column hiding: {view_name}")
         except SystemExit as fallback_exc:
-            print(f"Could not create clean Paper Bank view: {fallback_exc}")
+            print(f"Could not create Paper Bank view {view_name}: {fallback_exc}")
 
 
 def _view_property_visibility(notion: NotionClient, data_source_id: str, visible_names: list[str]) -> list[dict[str, Any]]:
@@ -881,6 +1087,10 @@ def _any_title(page: dict[str, Any]) -> str:
         if prop.get("type") == "title":
             return "".join(part.get("plain_text", "") for part in prop.get("title", []))
     return ""
+
+
+def _usable_page(page: dict[str, Any]) -> bool:
+    return page.get("object") == "page" and not page.get("in_trash") and not page.get("archived")
 
 
 def _append_dashboard(notion: NotionClient, parent_page_id: str, ids: dict[str, str]) -> None:

@@ -13,6 +13,7 @@ Recommended commands:
 ```bash
 .venv/bin/research-os run-pdf "/full/path/to/paper.pdf"
 .venv/bin/research-os run-folder "/path/to/Literature" --limit 3
+.venv/bin/research-os enhance-paper --paper-id "NOTION_PAGE_ID" --content "/full/path/to/paper.pdf"
 .venv/bin/research-os ux-v2
 ```
 
@@ -26,11 +27,13 @@ It should contain:
 
 - A short English guide.
 - A lightweight Paper Bank linked view.
+- Topic and Method lenses for browsing papers by research topic, empirical method, contribution type, formula/model, and data setting.
 - A Paper Page UX v2 guide.
 
 Each generated paper page should use visually distinct sections:
 
 - Blue: paper facts and Paper Card.
+- Blue/gray: Research Mechanics, including topic, method, contribution type, key formula/model, core variables, and data setting.
 - Yellow or orange: Taste Memo and referee concerns.
 - Green: idea extensions and promoted ideas.
 - Red: risks, fatal flaws, or pipeline stops.

@@ -5,6 +5,46 @@ from typing import Any
 
 FIELDS = ["Disclosure", "Capital Markets", "Auditing", "Tax", "Governance", "AI/Data", "Other"]
 JOURNALS = ["TAR", "JAR", "JAE", "RAST", "CAR", "WP", "Other"]
+RESEARCH_TOPICS = [
+    "Disclosure",
+    "Market Reaction",
+    "Earnings Quality",
+    "Auditing",
+    "Tax",
+    "Governance",
+    "Debt Contracting",
+    "Analysts",
+    "Enforcement",
+    "ESG",
+    "AI/Data",
+    "Other",
+]
+METHODS = [
+    "Archival",
+    "Difference-in-Differences",
+    "Event Study",
+    "Regression Discontinuity",
+    "Instrumental Variables",
+    "Experiment",
+    "Survey",
+    "Text Analysis",
+    "Machine Learning",
+    "Structural",
+    "Theory",
+    "Other",
+]
+CONTRIBUTION_TYPES = [
+    "New Question",
+    "New Setting",
+    "New Data",
+    "New Measure",
+    "Identification",
+    "Mechanism",
+    "Theory",
+    "Method",
+    "Policy Relevance",
+    "Other",
+]
 
 
 def title() -> dict[str, Any]:
@@ -76,6 +116,13 @@ BASE_SCHEMAS: dict[str, tuple[str, dict[str, Any]]] = {
             "One-Sentence Summary": text(),
             "Research Question": text(),
             "Key Takeaway": text(),
+            "Research Topic": multi_select(RESEARCH_TOPICS),
+            "Method": multi_select(METHODS),
+            "Contribution Type": multi_select(CONTRIBUTION_TYPES),
+            "Key Contribution": text(),
+            "Formula/Model": text(),
+            "Core Variables": text(),
+            "Data/Setting": text(),
             "Error Message": text(),
             "Created Date": created_time(),
         },

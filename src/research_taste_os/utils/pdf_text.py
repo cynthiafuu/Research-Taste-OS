@@ -9,6 +9,11 @@ import requests
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 
+try:
+    import pdfplumber
+except ImportError:  # pragma: no cover - optional extraction enhancer
+    pdfplumber = None
+
 
 MAX_CHARS = 65000
 BAD_TITLE_MARKERS = ["pii:", "s0378", "microsoft word", "untitled", "default"]
@@ -45,16 +50,114 @@ def read_url(url: str) -> str:
 
 
 def read_pdf_bytes(content: bytes) -> str:
+    pypdf_pages = _extract_pypdf_pages(content)
+    plumber_pages = _extract_pdfplumber_pages(content)
+    page_count = max(len(pypdf_pages), len(plumber_pages))
+    pages = []
+    for index in range(min(page_count, 40)):
+        pypdf_text = pypdf_pages[index] if index < len(pypdf_pages) else ""
+        plumber_text = plumber_pages[index] if index < len(plumber_pages) else ""
+        best_text = _best_page_text(pypdf_text, plumber_text)
+        if best_text:
+            pages.append(f"[Page {index + 1}]\n{best_text}")
+    text = "\n\n".join(part.strip() for part in pages if part.strip())
+    if not text:
+        raise SystemExit("Could not extract text from this PDF. Try another PDF URL or save OCR text as .txt/.md.")
+    formula_candidates = _formula_candidates(text)
+    if formula_candidates:
+        text += "\n\n[Formula Candidates]\n" + "\n".join(f"- {line}" for line in formula_candidates)
+    return text
+
+
+def _extract_pypdf_pages(content: bytes) -> list[str]:
     reader = PdfReader(io.BytesIO(content))
     pages = []
     for index, page in enumerate(reader.pages):
         if index >= 40:
             break
         pages.append(page.extract_text() or "")
-    text = "\n\n".join(part.strip() for part in pages if part.strip())
-    if not text:
-        raise SystemExit("Could not extract text from this PDF. Try another PDF URL or save OCR text as .txt/.md.")
-    return text
+    return pages
+
+
+def _extract_pdfplumber_pages(content: bytes) -> list[str]:
+    if pdfplumber is None:
+        return []
+    pages = []
+    try:
+        with pdfplumber.open(io.BytesIO(content)) as pdf:
+            for index, page in enumerate(pdf.pages):
+                if index >= 40:
+                    break
+                text = page.extract_text(x_tolerance=1, y_tolerance=3, layout=True) or ""
+                tables = page.extract_tables() or []
+                table_text = "\n".join(_table_to_text(table) for table in tables[:3])
+                pages.append("\n".join(part for part in [text, table_text] if part.strip()))
+    except Exception:
+        return []
+    return pages
+
+
+def _best_page_text(pypdf_text: str, plumber_text: str) -> str:
+    pypdf_text = pypdf_text.strip()
+    plumber_text = plumber_text.strip()
+    if not plumber_text:
+        return pypdf_text
+    if not pypdf_text:
+        return plumber_text
+    if _formula_signal(plumber_text) >= _formula_signal(pypdf_text):
+        return plumber_text if len(plumber_text) >= len(pypdf_text) * 0.6 else pypdf_text
+    return pypdf_text if len(pypdf_text) >= len(plumber_text) * 0.6 else plumber_text
+
+
+def _table_to_text(table: list[list[str | None]]) -> str:
+    rows = []
+    for row in table:
+        cells = [(cell or "").strip() for cell in row]
+        if any(cells):
+            rows.append(" | ".join(cells))
+    return "\n".join(rows)
+
+
+def _formula_candidates(text: str) -> list[str]:
+    candidates = []
+    for raw_line in text.splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip()
+        if len(line) < 12 or len(line) > 240:
+            continue
+        if _formula_signal(line) < 2:
+            continue
+        lower = line.lower()
+        if any(skip in lower for skip in ["copyright", "http", "www.", "email", "appendix table"]):
+            continue
+        candidates.append(line)
+    return _dedupe_preserve_order(candidates)[:12]
+
+
+def _formula_signal(text: str) -> int:
+    signal = 0
+    if "=" in text or " = " in text:
+        signal += 2
+    if re.search(r"\b(reg|model|equation|estimate|where|dependent variable)\b", text, re.IGNORECASE):
+        signal += 1
+    if re.search(r"\b(beta|alpha|gamma|delta|theta|lambda|coefficient|subscript)\b|[βγαδθλ]", text, re.IGNORECASE):
+        signal += 1
+    if re.search(r"\b(i,t|it|j,t|firm|year|quarter)\b|[_{}]", text, re.IGNORECASE):
+        signal += 1
+    if re.search(r"[+\-*/×÷]", text):
+        signal += 1
+    return signal
+
+
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    seen = set()
+    output = []
+    for value in values:
+        key = value.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(value)
+    return output
 
 
 def infer_pdf_metadata(path_or_url: str) -> dict[str, str | int | None]:

@@ -77,6 +77,11 @@ def main() -> None:
     paper_card.add_argument("--content", help="Paper text, abstract, URL, or path to .pdf/.txt/.md")
     paper_card.set_defaults(func=core.generate_paper_card)
 
+    enhance = sub.add_parser("enhance-paper", help="Append Extraction v2 mechanics and classification to an existing Paper Bank page")
+    enhance.add_argument("--paper-id", required=True)
+    enhance.add_argument("--content", help="Paper text, URL, or path to .pdf/.txt/.md; defaults to current Notion page text")
+    enhance.set_defaults(func=core.enhance_paper)
+
     taste = sub.add_parser("generate-taste-memo", aliases=["taste-memo"], help="Create a linked Taste Memo")
     taste.add_argument("--paper-id", required=True)
     taste.add_argument("--content", help="Paper/Card text, URL, or path to .pdf/.txt/.md")

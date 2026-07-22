@@ -11,6 +11,7 @@ Use this skill to operate the user's Notion-first research taste workflow. The d
 
 - Write all Notion-facing output in English.
 - Treat `Paper Bank` as the main interface. Do not push the user back into the old multi-database workflow unless they explicitly ask for relational mode.
+- Preserve the Extraction v2 contract: capture research topic, method, contribution type, key contribution, formula/model, core variables, and data/setting when processing papers.
 - Do not run `research-os setup-notion` unless the user explicitly wants a new Notion workspace; it creates another database set.
 - Prefer `.venv/bin/research-os` from the project root so the correct editable install and `.env` are used.
 - Never print `.env` secrets or API keys.
@@ -33,16 +34,17 @@ From the project root:
 .venv/bin/research-os run-pdf "/full/path/to/paper.pdf"
 .venv/bin/research-os run-folder "/full/path/to/Literature" --limit 3
 .venv/bin/research-os ux-v2
+.venv/bin/research-os enhance-paper --paper-id "NOTION_PAGE_ID" --content "/full/path/to/paper.pdf"
 ```
 
-Use `run-pdf` for one PDF, `run-folder` for a batch, and `ux-v2` to rebuild the simplified Notion dashboard and backfill missing `My Judgment` sections.
+Use `run-pdf` for one PDF, `run-folder` for a batch, `enhance-paper` to refresh Extraction v2 for an existing paper page, and `ux-v2` to rebuild the simplified Notion dashboard and backfill missing `My Judgment` sections.
 
 ## Workflow Shape
 
 The current recommended flow is:
 
 ```text
-PDF -> Paper Bank row -> Paper Card -> Taste Memo -> Idea Extensions -> Scorecards -> My Judgment
+PDF -> Paper Bank row -> Paper Card -> Research Mechanics -> Taste Memo -> Idea Extensions -> Scorecards -> My Judgment
 ```
 
 If an idea meets the Promote rule, the paper page may also include Mini Proposal, Referee Simulation, and Advisor Memo sections.

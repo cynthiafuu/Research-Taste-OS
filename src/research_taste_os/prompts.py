@@ -9,7 +9,9 @@ SYSTEM = (
 
 PAPER_CARD = """Create a concise Paper Card for the paper below.
 
-Focus on the research question, setting, data, method, findings, and why this paper may be worth reading.
+Focus on the research question, setting, data, method, findings, contribution, and why this paper may be worth reading.
+When formulas, equations, variable definitions, or regression models are visible in the extracted text,
+preserve the central model in readable plain text or LaTeX-like notation.
 
 Output in Markdown with this exact structure:
 ## Paper Card
@@ -18,8 +20,47 @@ Output in Markdown with this exact structure:
 ### Setting
 ### Data
 ### Method
+### Key Formula or Empirical Model
+### Core Variables
 ### Main Finding
+### Contribution
 ### Initial Reason to Read
+
+Paper content:
+{content}
+"""
+
+EXTRACTION_V2 = """Extract structured research mechanics from this accounting research paper.
+
+Write entirely in English. Be conservative: if an item is not visible in the supplied text, say "Not clearly detected" rather than inventing it.
+Pay special attention to formulas, equations, regression models, variable definitions, contribution claims, research topics, and empirical method.
+
+Allowed research_topic values:
+Disclosure, Market Reaction, Earnings Quality, Auditing, Tax, Governance, Debt Contracting, Analysts, Enforcement, ESG, AI/Data, Other
+
+Allowed method values:
+Archival, Difference-in-Differences, Event Study, Regression Discontinuity, Instrumental Variables, Experiment, Survey, Text Analysis, Machine Learning, Structural, Theory, Other
+
+Allowed contribution_type values:
+New Question, New Setting, New Data, New Measure, Identification, Mechanism, Theory, Method, Policy Relevance, Other
+
+Return strict JSON only:
+{{
+  "research_topic": ["Other"],
+  "method": ["Archival"],
+  "contribution_type": ["Other"],
+  "key_contribution": "",
+  "formula_or_model": "",
+  "core_variables": "",
+  "data_setting": "",
+  "identification_summary": "",
+  "mechanism_summary": "",
+  "classification_rationale": "",
+  "body_markdown": "## Research Mechanics\\n### Topics and Methods\\n\\n### Contribution\\n\\n### Key Formula or Empirical Model\\n\\n### Core Variables\\n\\n### Data and Setting\\n\\n### Identification\\n\\n### Mechanism\\n"
+}}
+
+Paper Card:
+{paper_card}
 
 Paper content:
 {content}
@@ -33,6 +74,7 @@ identification quality, contribution strength, and writing quality.
 
 Output Markdown with this structure:
 ## One-Sentence Contribution
+## Contribution Type
 ## Research Question
 ## Why This Question Matters
 ## Theoretical Tension
@@ -40,6 +82,7 @@ Output Markdown with this structure:
 ## Data and Sample
 ## Identification Strategy
 ## Empirical Design
+## Key Formula or Empirical Model
 ## Main Findings
 ## Strongest Part
 ## Weakest Part

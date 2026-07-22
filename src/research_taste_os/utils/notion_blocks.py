@@ -34,6 +34,14 @@ def quote(text: str, color: str = "default") -> dict:
     return {"object": "block", "type": "quote", "quote": {"rich_text": rich_text(text), "color": color}}
 
 
+def code_block(text: str, language: str = "plain text") -> dict:
+    return {
+        "object": "block",
+        "type": "code",
+        "code": {"rich_text": rich_text(text), "language": language},
+    }
+
+
 def todo(text: str, checked: bool = False) -> dict:
     return {"object": "block", "type": "to_do", "to_do": {"rich_text": rich_text(text), "checked": checked}}
 
