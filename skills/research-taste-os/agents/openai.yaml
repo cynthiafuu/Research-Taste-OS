@@ -1,4 +1,4 @@
 interface:
-  display_name: "Research Taste OS"
-  short_description: "Run the Notion-first research taste workflow"
-  default_prompt: "Use $research-taste-os to process a paper PDF into my Notion Research Taste OS."
+  display_name: "商科社科论文精读与开题导师"
+  short_description: "上传论文 PDF，自动生成精读判断、选题评分和开题 memo"
+  default_prompt: "请使用 $research-taste-os 处理这篇商科/社科论文：建立 Paper Card，拆解研究问题、理论、方法、数据、识别/论证和贡献，生成 taste memo、3 个选题延展、8 项评分表，并把结果写入 Notion Paper Bank。"

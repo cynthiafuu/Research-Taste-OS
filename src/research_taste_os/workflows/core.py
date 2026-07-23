@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,7 +22,7 @@ from ..notion_client import (
     url_prop,
 )
 from ..schema import BASE_SCHEMAS, CONTRIBUTION_TYPES, METHODS, RESEARCH_TOPICS, data_source_properties, relation_patches
-from ..utils.notion_blocks import bulleted, callout, code_block, divider, heading, paragraph, quote, todo
+from ..utils.notion_blocks import bulleted, callout, divider, heading, paragraph, quote, todo
 from ..utils.pdf_text import infer_pdf_metadata, read_text_source
 from ..utils.scoring import SCORE_FIELDS, decision_for_scores, total_score
 
@@ -30,6 +31,7 @@ SIMPLE_VIEW_NAME = "Paper Bank - Clean Reading View"
 SIMPLE_VIEW_VISIBLE_PROPERTIES = [
     "Title",
     "Status",
+    "Source Folder",
     "Research Topic",
     "Method",
     "Contribution Type",
@@ -39,6 +41,7 @@ SIMPLE_VIEW_VISIBLE_PROPERTIES = [
 ]
 TOPIC_VIEW_VISIBLE_PROPERTIES = [
     "Title",
+    "Source Folder",
     "Research Topic",
     "Contribution Type",
     "Key Contribution",
@@ -47,8 +50,9 @@ TOPIC_VIEW_VISIBLE_PROPERTIES = [
 ]
 METHOD_VIEW_VISIBLE_PROPERTIES = [
     "Title",
+    "Source Folder",
     "Method",
-    "Formula/Model",
+    "Model/Method Summary",
     "Core Variables",
     "Data/Setting",
     "Status",
@@ -130,6 +134,8 @@ def add_paper(args: Any) -> dict[str, Any]:
     settings = Settings()
     notion = NotionClient(settings)
     db_id = require(settings.paper_bank_db_id, "PAPER_BANK_DB_ID")
+    if not getattr(args, "skip_schema_update", False):
+        _ensure_paper_bank_schema(notion, db_id)
     page = notion.create_page(
         db_id,
         {
@@ -140,6 +146,8 @@ def add_paper(args: Any) -> dict[str, Any]:
             "Field": multi_select_prop(args.field or []),
             "PDF/Link": url_prop(args.url),
             "Source Path": rich_text_prop(getattr(args, "source_path", None) or getattr(args, "content", None)),
+            "Source Folder": rich_text_prop(getattr(args, "source_folder", "")),
+            "File Hash": rich_text_prop(getattr(args, "file_hash", "")),
             "Status": select_prop("Inbox"),
             "Pipeline Step": select_prop("Intake"),
             "Importance": number_prop(args.importance),
@@ -152,7 +160,7 @@ def add_paper(args: Any) -> dict[str, Any]:
             "Method": multi_select_prop([]),
             "Contribution Type": multi_select_prop([]),
             "Key Contribution": rich_text_prop("Pending AI extraction"),
-            "Formula/Model": rich_text_prop("Pending AI extraction"),
+            "Model/Method Summary": rich_text_prop("Pending AI extraction"),
             "Core Variables": rich_text_prop("Pending AI extraction"),
             "Data/Setting": rich_text_prop("Pending AI extraction"),
             "Error Message": rich_text_prop(""),
@@ -172,6 +180,7 @@ def _paper_intake_markdown(args: Any) -> str:
         f"Authors: {getattr(args, 'authors', '') or 'Not detected'}",
         f"Year: {getattr(args, 'year', None) or 'Not detected'}",
         f"Field: {', '.join(getattr(args, 'field', []) or ['Other'])}",
+        f"Source Folder: {getattr(args, 'source_folder', '') or 'Not detected'}",
         f"Source: {source}",
         "## Reading Intent",
         "Use this page to decide what this paper teaches about research taste, not just what it says.",
@@ -204,7 +213,7 @@ def generate_paper_card(args: Any) -> str:
             "Research Question": rich_text_prop(_first_section_line(markdown, "Research Question")),
             "Key Takeaway": rich_text_prop(_first_section_line(markdown, "Main Finding")),
             "Key Contribution": rich_text_prop(_first_section_line(markdown, "Contribution")),
-            "Formula/Model": rich_text_prop(_first_section_line(markdown, "Key Formula or Empirical Model")),
+            "Model/Method Summary": rich_text_prop(_first_section_line(markdown, "Model or Method Summary")),
             "Core Variables": rich_text_prop(_first_section_line(markdown, "Core Variables")),
         },
     )
@@ -467,6 +476,7 @@ def run_pdf(args: Any) -> dict[str, Any]:
             field=args.field or ["Other"],
             url=source if str(source).startswith(("http://", "https://")) else None,
             source_path=None if str(source).startswith(("http://", "https://")) else source,
+            source_folder="" if str(source).startswith(("http://", "https://")) else _source_folder_label(source),
             importance=args.importance,
             abstract=metadata.get("abstract", ""),
             detected_title=metadata.get("title", ""),
@@ -505,6 +515,146 @@ def run_folder(args: Any) -> list[dict[str, Any]]:
     return results
 
 
+def classify_folder(args: Any) -> list[dict[str, Any]]:
+    folder = Path(args.folder)
+    if not folder.exists() or not folder.is_dir():
+        raise SystemExit(f"Folder not found: {folder}")
+    pdfs = sorted(path for path in folder.rglob("*") if path.is_file() and path.suffix.lower() == ".pdf")
+    if not pdfs:
+        print(f"No PDFs found in {folder}")
+        return []
+    settings = Settings()
+    notion = NotionClient(settings)
+    paper_bank_id = require(settings.paper_bank_db_id, "PAPER_BANK_DB_ID")
+    _ensure_paper_bank_schema(notion, paper_bank_id)
+    existing_pages = _source_page_index(notion, paper_bank_id)
+    existing_hashes = _file_hash_page_index(notion, paper_bank_id)
+    selected = []
+    for pdf in pdfs:
+        source = str(pdf)
+        file_hash = _file_sha256(pdf)
+        existing_page = existing_pages.get(source)
+        duplicate_page = None if existing_page else existing_hashes.get(file_hash)
+        if duplicate_page and not args.force:
+            _merge_source_folder_label(notion, duplicate_page, _source_folder_label(pdf, folder))
+            if _page_has_completed_classification(duplicate_page):
+                title = _page_title(duplicate_page, "Title") or duplicate_page["id"]
+                print(f"Skipping duplicate PDF content: {pdf} -> {title}")
+                continue
+            existing_page = duplicate_page
+        if not args.force and existing_page and _page_has_completed_classification(existing_page):
+            print(f"Skipping already imported PDF: {pdf}")
+            continue
+        selected.append((pdf, None if args.force else existing_page, file_hash))
+        if args.limit and len(selected) >= args.limit:
+            break
+    if not selected:
+        print("No new PDFs to classify.")
+        return []
+    results = []
+    for index, (pdf, existing_page, file_hash) in enumerate(selected, start=1):
+        print(f"Classifying PDF {index}/{len(selected)}: {pdf}")
+        try:
+            results.append(
+                classify_pdf(
+                    SimpleNamespace(
+                        pdf=str(pdf),
+                        title=None,
+                        authors=args.authors,
+                        journal=args.journal,
+                        year=None,
+                        field=args.field,
+                        importance=args.importance,
+                        source_folder=_source_folder_label(pdf, folder),
+                        existing_paper_id=(existing_page or {}).get("id"),
+                        file_hash=file_hash,
+                    )
+                )
+            )
+        except (Exception, SystemExit) as exc:
+            print(f"Failed to classify PDF: {pdf}")
+            print(str(exc))
+            if _batch_should_stop(str(exc)):
+                print("Stopping batch because this looks like a global API/configuration issue.")
+                break
+    return results
+
+
+def classify_pdf(args: Any) -> dict[str, Any]:
+    pdf = _source_arg(getattr(args, "pdf", ""))
+    metadata = infer_pdf_metadata(pdf)
+    title = args.title or metadata.get("title") or "Untitled Paper"
+    year = args.year if args.year is not None else metadata.get("year")
+    source = metadata.get("source") or pdf
+    existing_paper_id = getattr(args, "existing_paper_id", None)
+    if existing_paper_id:
+        settings = Settings()
+        notion = NotionClient(settings)
+        paper = notion.retrieve_page(existing_paper_id)
+        paper_id = paper["id"]
+        print(f"Reusing existing paper page: {paper_id}")
+        _archive_formula_dump_blocks(notion, paper_id)
+        notion.update_page(
+            paper_id,
+            {
+                "Title": title_prop(title),
+                "Authors": rich_text_prop(args.authors or metadata.get("authors", "")),
+                "Journal": select_prop(args.journal),
+                "Year": number_prop(year),
+                "Field": multi_select_prop(args.field or ["Other"]),
+                "PDF/Link": url_prop(source if str(source).startswith(("http://", "https://")) else None),
+                "Source Path": rich_text_prop(None if str(source).startswith(("http://", "https://")) else source),
+                "Source Folder": rich_text_prop(getattr(args, "source_folder", "") or _source_folder_label(source)),
+                "File Hash": rich_text_prop(getattr(args, "file_hash", "")),
+                "Status": select_prop("Reading"),
+                "Pipeline Step": select_prop("Paper Card"),
+                "Detected Title": rich_text_prop(metadata.get("title", "") or title),
+                "Abstract": rich_text_prop(metadata.get("abstract", "")),
+                "Error Message": rich_text_prop(""),
+            },
+        )
+    else:
+        paper = add_paper(
+            SimpleNamespace(
+                title=title,
+                authors=args.authors or metadata.get("authors", ""),
+                journal=args.journal,
+                year=year,
+                field=args.field or ["Other"],
+                url=source if str(source).startswith(("http://", "https://")) else None,
+                source_path=None if str(source).startswith(("http://", "https://")) else source,
+                source_folder=getattr(args, "source_folder", "") or _source_folder_label(source),
+                file_hash=getattr(args, "file_hash", ""),
+                importance=args.importance,
+                abstract=metadata.get("abstract", ""),
+                detected_title=metadata.get("title", ""),
+                content=pdf,
+                skip_schema_update=True,
+            )
+        )
+        paper_id = paper["id"]
+    try:
+        settings = Settings()
+        notion = NotionClient(settings)
+        llm = LLMClient(settings)
+        _archive_formula_dump_blocks(notion, paper_id)
+        content = read_text_source(pdf)
+        paper_card = llm.complete(prompts.PAPER_CARD.format(content=content))
+        _append_paper_card_blocks(notion, paper_id, paper_card)
+        mechanics = _extract_and_append_research_mechanics(notion, llm, paper_id, content, paper_card)
+        if "My Judgment" not in notion.page_text(paper_id):
+            _append_my_judgment_section(notion, paper_id)
+        notion.update_page(paper_id, {"Status": select_prop("Reading"), "Pipeline Step": select_prop("Paper Card")})
+        print(f"Classified paper: {paper_id}")
+        return {"paper": paper, "paper_card": paper_card, "mechanics": mechanics}
+    except Exception as exc:
+        _record_processing_error(paper_id, exc)
+        raise
+    except SystemExit as exc:
+        _record_processing_error(paper_id, exc)
+        raise
+
+
 def _run_pipeline_for_paper(paper: dict[str, Any], content: str, target_journal_logic: str) -> dict[str, Any]:
     paper_id = paper["id"]
     generate_paper_card(SimpleNamespace(paper_id=paper_id, content=content))
@@ -541,32 +691,7 @@ def _run_single_page_pipeline_for_paper(paper: dict[str, Any], content: str) -> 
     paper_id = paper["id"]
 
     paper_card = llm.complete(prompts.PAPER_CARD.format(content=content))
-    summary = _first_section_line(paper_card, "One-Sentence Summary")
-    research_question = _first_section_line(paper_card, "Research Question")
-    main_finding = _first_section_line(paper_card, "Main Finding")
-    notion.append_blocks(
-        paper_id,
-        [
-            divider(),
-            callout(f"TL;DR: {summary or 'Paper card generated. Review the sections below.'}", "blue_background", "🔎"),
-            callout(f"Research question: {research_question or 'See Paper Card below.'}", "gray_background", "❓"),
-            heading(2, "Paper Card", "blue"),
-        ],
-    )
-    notion.append_markdown(paper_id, _strip_top_heading(paper_card, "Paper Card"))
-    notion.update_page(
-        paper_id,
-        {
-            "Status": select_prop("Reading"),
-            "Pipeline Step": select_prop("Paper Card"),
-            "One-Sentence Summary": rich_text_prop(summary),
-            "Research Question": rich_text_prop(research_question),
-            "Key Takeaway": rich_text_prop(main_finding),
-            "Key Contribution": rich_text_prop(_first_section_line(paper_card, "Contribution")),
-            "Formula/Model": rich_text_prop(_first_section_line(paper_card, "Key Formula or Empirical Model")),
-            "Core Variables": rich_text_prop(_first_section_line(paper_card, "Core Variables")),
-        },
-    )
+    _append_paper_card_blocks(notion, paper_id, paper_card)
     print(f"Added Paper Card to paper: {paper_id}")
 
     mechanics = _extract_and_append_research_mechanics(notion, llm, paper_id, content, paper_card)
@@ -658,6 +783,35 @@ def _run_single_page_pipeline_for_paper(paper: dict[str, Any], content: str) -> 
     return {"paper": paper, "paper_card": paper_card, "mechanics": mechanics, "taste_memo": taste_memo, "ideas": scored_ideas}
 
 
+def _append_paper_card_blocks(notion: NotionClient, paper_id: str, paper_card: str) -> None:
+    summary = _first_section_line(paper_card, "One-Sentence Summary")
+    research_question = _first_section_line(paper_card, "Research Question")
+    main_finding = _first_section_line(paper_card, "Main Finding")
+    notion.append_blocks(
+        paper_id,
+        [
+            divider(),
+            callout(f"TL;DR: {summary or 'Paper card generated. Review the sections below.'}", "blue_background", "🔎"),
+            callout(f"Research question: {research_question or 'See Paper Card below.'}", "gray_background", "❓"),
+            heading(2, "Paper Card", "blue"),
+        ],
+    )
+    notion.append_markdown(paper_id, _strip_top_heading(paper_card, "Paper Card"))
+    notion.update_page(
+        paper_id,
+        {
+            "Status": select_prop("Reading"),
+            "Pipeline Step": select_prop("Paper Card"),
+            "One-Sentence Summary": rich_text_prop(summary),
+            "Research Question": rich_text_prop(research_question),
+            "Key Takeaway": rich_text_prop(main_finding),
+            "Key Contribution": rich_text_prop(_first_section_line(paper_card, "Contribution")),
+            "Model/Method Summary": rich_text_prop(_first_section_line(paper_card, "Model or Method Summary")),
+            "Core Variables": rich_text_prop(_first_section_line(paper_card, "Core Variables")),
+        },
+    )
+
+
 def _extract_and_append_research_mechanics(
     notion: NotionClient,
     llm: LLMClient,
@@ -670,7 +824,7 @@ def _extract_and_append_research_mechanics(
     methods = _allowed_multi_select(data.get("method"), METHODS)
     contribution_types = _allowed_multi_select(data.get("contribution_type"), CONTRIBUTION_TYPES)
     key_contribution = _clean_extracted_text(data.get("key_contribution"))
-    formula_or_model = _clean_extracted_text(data.get("formula_or_model"))
+    model_method_summary = _clean_extracted_text(data.get("model_method_summary") or data.get("formula_or_model"))
     core_variables = _clean_extracted_text(data.get("core_variables"))
     data_setting = _clean_extracted_text(data.get("data_setting"))
     identification_summary = _clean_extracted_text(data.get("identification_summary"))
@@ -687,14 +841,8 @@ def _extract_and_append_research_mechanics(
             quote(f"Key contribution: {key_contribution or 'Not clearly detected'}", "purple_background"),
         ],
     )
-    if _has_detected_content(formula_or_model):
-        notion.append_blocks(
-            paper_id,
-            [
-                heading(3, "Key Formula or Empirical Model", "gray"),
-                code_block(formula_or_model),
-            ],
-        )
+    if _has_detected_content(model_method_summary):
+        notion.append_blocks(paper_id, [callout(f"Model/method: {model_method_summary}", "gray_background", "🧪")])
     body_markdown = data.get("body_markdown", "")
     if body_markdown:
         notion.append_markdown(paper_id, _strip_top_heading(body_markdown, "Research Mechanics"))
@@ -707,7 +855,7 @@ def _extract_and_append_research_mechanics(
             "Method": multi_select_prop(methods),
             "Contribution Type": multi_select_prop(contribution_types),
             "Key Contribution": rich_text_prop(key_contribution),
-            "Formula/Model": rich_text_prop(formula_or_model),
+            "Model/Method Summary": rich_text_prop(model_method_summary),
             "Core Variables": rich_text_prop(core_variables),
             "Data/Setting": rich_text_prop(data_setting),
             "Pipeline Step": select_prop("Paper Card"),
@@ -719,7 +867,7 @@ def _extract_and_append_research_mechanics(
         "method": methods,
         "contribution_type": contribution_types,
         "key_contribution": key_contribution,
-        "formula_or_model": formula_or_model,
+        "model_method_summary": model_method_summary,
         "core_variables": core_variables,
         "data_setting": data_setting,
         "identification_summary": identification_summary,
@@ -796,23 +944,29 @@ def _append_my_judgment_section(notion: NotionClient, paper_id: str) -> None:
 
 
 def _backfill_existing_paper_pages_v2(notion: NotionClient, paper_bank_id: str) -> None:
-    data = notion.query_database(
-        paper_bank_id,
-        {
-            "page_size": 50,
+    cursor = None
+    while True:
+        payload: dict[str, Any] = {
+            "page_size": 100,
             "filter": {"property": "Status", "select": {"does_not_equal": "Archived"}},
-        },
-    )
-    for page in data.get("results", []):
-        status = _select_value(page.get("properties", {}).get("Status"))
-        if status == "Error":
-            continue
-        body = notion.page_text(page["id"])
-        if "My Judgment" in body:
-            continue
-        _append_my_judgment_section(notion, page["id"])
-        title = _page_title(page, "Title") or page["id"]
-        print(f"Backfilled My Judgment section: {title}")
+        }
+        if cursor:
+            payload["start_cursor"] = cursor
+        data = notion.query_database(paper_bank_id, payload)
+        for page in data.get("results", []):
+            status = _select_value(page.get("properties", {}).get("Status"))
+            if status == "Error":
+                continue
+            _archive_formula_dump_blocks(notion, page["id"])
+            body = notion.page_text(page["id"])
+            if "My Judgment" in body:
+                continue
+            _append_my_judgment_section(notion, page["id"])
+            title = _page_title(page, "Title") or page["id"]
+            print(f"Backfilled My Judgment section: {title}")
+        if not data.get("has_more"):
+            return
+        cursor = data.get("next_cursor")
 
 
 def _record_processing_error(paper_id: str, exc: BaseException) -> None:
@@ -831,6 +985,34 @@ The automated pipeline stopped here.
 """,
         )
     except Exception:
+        pass
+
+
+def _archive_formula_dump_blocks(notion: NotionClient, paper_id: str) -> None:
+    archive_section = False
+    for block in notion.retrieve_block_children(paper_id):
+        block_type = block.get("type")
+        text = _block_plain_text(block).strip().lower()
+        if block_type in {"heading_2", "heading_3"} and "key formula" in text:
+            _archive_block_safely(notion, block)
+            archive_section = True
+            continue
+        if archive_section and block_type in {"heading_2", "heading_3"}:
+            archive_section = False
+        if archive_section and block_type in {"paragraph", "code", "quote", "bulleted_list_item", "numbered_list_item"}:
+            _archive_block_safely(notion, block)
+
+
+def _block_plain_text(block: dict[str, Any]) -> str:
+    block_type = block.get("type")
+    data = block.get(block_type or "", {})
+    return "".join(part.get("plain_text", "") for part in data.get("rich_text", []))
+
+
+def _archive_block_safely(notion: NotionClient, block: dict[str, Any]) -> None:
+    try:
+        notion.archive_block(block["id"])
+    except SystemExit:
         pass
 
 
@@ -985,8 +1167,9 @@ def _rebuild_simple_dashboard(notion: NotionClient, page_id: str, paper_bank_id:
             ),
             heading(2, "How To Add Papers", "gray"),
             paragraph('Single paper: research-os run-pdf "/full/path/to/paper.pdf"'),
-            paragraph('Batch folder: research-os run-folder "/full/path/to/Literature" --limit 3'),
-            callout("Do not run setup-notion again; it creates another legacy database set. Daily commands: run-pdf, run-folder, ux-v2.", "red_background", "⚠️"),
+            paragraph('Batch classify library: research-os classify-folder "/full/path/to/Literature"'),
+            paragraph('Deep read a small folder: research-os run-folder "/full/path/to/Literature" --limit 3'),
+            callout("Do not run setup-notion again; it creates another legacy database set. Daily commands: run-pdf, classify-folder, ux-v2.", "red_background", "⚠️"),
             divider(),
             heading(2, "Paper Bank", "green"),
             callout(
@@ -1003,7 +1186,7 @@ def _rebuild_simple_dashboard(notion: NotionClient, page_id: str, paper_bank_id:
             divider(),
             heading(2, "Browse by Topic and Method", "green"),
             callout(
-                "Use these lenses to compare papers by research topic, empirical method, contribution type, formulas/models, and data setting without leaving Paper Bank.",
+                "Use these lenses to compare papers by source folder, research topic, empirical method, contribution type, model/method summary, and data setting without leaving Paper Bank.",
                 "green_background",
                 "🗂️",
             ),
@@ -1018,7 +1201,7 @@ def _rebuild_simple_dashboard(notion: NotionClient, page_id: str, paper_bank_id:
             heading(2, "Paper Page UX v2", "purple"),
             callout("Blue = paper facts. Yellow = taste judgment. Green = idea extensions. Red = risks. Purple = your own judgment.", "purple_background", "🎨"),
             bulleted("Paper Card: quickly identify the question, design, and main finding."),
-            bulleted("Research Mechanics: extract topic, method, contribution type, formula/model, variables, and data setting."),
+            bulleted("Research Mechanics: extract topic, method, contribution type, model/method summary, variables, and data setting."),
             bulleted("Taste Memo: judge why the paper works, or why it lacks research taste."),
             bulleted("Idea Extensions: practice extension thinking before committing to a project."),
             bulleted("Scorecards: force a concrete judgment about whether an idea is worth pursuing."),
@@ -1276,6 +1459,32 @@ def _source_arg(value: Any) -> str:
     return value
 
 
+def _source_folder_label(path_value: Any, root: Path | None = None) -> str:
+    path = Path(str(path_value))
+    try:
+        parent = path.parent
+        if root is not None:
+            relative = parent.relative_to(root)
+            if str(relative) != ".":
+                return str(relative)
+        return parent.name
+    except ValueError:
+        return path.parent.name
+
+
+def _batch_should_stop(message: str) -> bool:
+    lower = message.lower()
+    return any(
+        marker in lower
+        for marker in [
+            "openai api quota",
+            "openai api error",
+            "notion api error",
+            "missing required environment variable",
+        ]
+    )
+
+
 def smoke_test(args: Any) -> None:
     settings = Settings()
     notion = NotionClient(settings)
@@ -1323,6 +1532,96 @@ def smoke_test(args: Any) -> None:
 
 def _page_title(page: dict[str, Any], property_name: str) -> str:
     parts = page.get("properties", {}).get(property_name, {}).get("title", [])
+    return "".join(part.get("plain_text", "") for part in parts)
+
+
+def _source_page_index(notion: NotionClient, paper_bank_id: str) -> dict[str, dict[str, Any]]:
+    pages_by_source: dict[str, dict[str, Any]] = {}
+    cursor = None
+    while True:
+        payload: dict[str, Any] = {"page_size": 100}
+        if cursor:
+            payload["start_cursor"] = cursor
+        data = notion.query_database(paper_bank_id, payload)
+        for page in data.get("results", []):
+            source_path = _rich_text_value(page.get("properties", {}).get("Source Path"))
+            if source_path:
+                current = pages_by_source.get(source_path)
+                if current is None or _page_has_completed_classification(page):
+                    pages_by_source[source_path] = page
+        if not data.get("has_more"):
+            return pages_by_source
+        cursor = data.get("next_cursor")
+
+
+def _file_hash_page_index(notion: NotionClient, paper_bank_id: str) -> dict[str, dict[str, Any]]:
+    pages_by_hash: dict[str, dict[str, Any]] = {}
+    cursor = None
+    while True:
+        payload: dict[str, Any] = {"page_size": 100}
+        if cursor:
+            payload["start_cursor"] = cursor
+        data = notion.query_database(paper_bank_id, payload)
+        for page in data.get("results", []):
+            props = page.get("properties", {})
+            file_hash = _rich_text_value(props.get("File Hash"))
+            if not file_hash:
+                source_path = _rich_text_value(props.get("Source Path"))
+                path = Path(source_path)
+                if path.exists() and path.is_file():
+                    file_hash = _file_sha256(path)
+                    try:
+                        notion.update_page(page["id"], {"File Hash": rich_text_prop(file_hash)})
+                    except SystemExit:
+                        pass
+            if file_hash:
+                current = pages_by_hash.get(file_hash)
+                if current is None or _page_has_completed_classification(page):
+                    pages_by_hash[file_hash] = page
+        if not data.get("has_more"):
+            return pages_by_hash
+        cursor = data.get("next_cursor")
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _merge_source_folder_label(notion: NotionClient, page: dict[str, Any], label: str) -> None:
+    if not label:
+        return
+    current = _rich_text_value(page.get("properties", {}).get("Source Folder"))
+    labels = [part.strip() for part in current.split(";") if part.strip()]
+    if label in labels:
+        return
+    labels.append(label)
+    try:
+        notion.update_page(page["id"], {"Source Folder": rich_text_prop("; ".join(labels))})
+    except SystemExit:
+        pass
+
+
+def _page_has_completed_classification(page: dict[str, Any]) -> bool:
+    props = page.get("properties", {})
+    status = _select_value(props.get("Status"))
+    if status in {"Error", "Archived"}:
+        return False
+    topics = props.get("Research Topic", {}).get("multi_select", [])
+    methods = props.get("Method", {}).get("multi_select", [])
+    contribution = _rich_text_value(props.get("Key Contribution")).lower()
+    model_summary = _rich_text_value(props.get("Model/Method Summary")).lower()
+    pending_markers = ["pending ai extraction", "not generated because ai step failed"]
+    has_classification = bool(topics or methods)
+    has_extracted_text = bool(model_summary) and not any(marker in contribution for marker in pending_markers)
+    return has_classification and has_extracted_text
+
+
+def _rich_text_value(prop: dict[str, Any] | None) -> str:
+    parts = (prop or {}).get("rich_text", [])
     return "".join(part.get("plain_text", "") for part in parts)
 
 

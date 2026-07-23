@@ -3,8 +3,28 @@ from __future__ import annotations
 from typing import Any
 
 
-FIELDS = ["Disclosure", "Capital Markets", "Auditing", "Tax", "Governance", "AI/Data", "Other"]
-JOURNALS = ["TAR", "JAR", "JAE", "RAST", "CAR", "WP", "Other"]
+FIELDS = [
+    "Business",
+    "Economics",
+    "Finance",
+    "Accounting",
+    "Management",
+    "Marketing",
+    "Strategy",
+    "Education",
+    "Sociology",
+    "Communication",
+    "Public Policy",
+    "Psychology",
+    "Disclosure",
+    "Capital Markets",
+    "Auditing",
+    "Tax",
+    "Governance",
+    "AI/Data",
+    "Other",
+]
+JOURNALS = ["Top Journal", "A Journal", "Field Journal", "WP", "TAR", "JAR", "JAE", "RAST", "CAR", "Other"]
 RESEARCH_TOPICS = [
     "Disclosure",
     "Market Reaction",
@@ -17,6 +37,16 @@ RESEARCH_TOPICS = [
     "Enforcement",
     "ESG",
     "AI/Data",
+    "Management",
+    "Strategy",
+    "Marketing",
+    "Finance",
+    "Economics",
+    "Education",
+    "Sociology",
+    "Communication",
+    "Public Policy",
+    "Psychology",
     "Other",
 ]
 METHODS = [
@@ -27,10 +57,15 @@ METHODS = [
     "Instrumental Variables",
     "Experiment",
     "Survey",
+    "Interview",
+    "Case Study",
+    "Ethnography",
     "Text Analysis",
     "Machine Learning",
     "Structural",
     "Theory",
+    "Qualitative",
+    "Mixed Methods",
     "Other",
 ]
 CONTRIBUTION_TYPES = [
@@ -42,6 +77,9 @@ CONTRIBUTION_TYPES = [
     "Mechanism",
     "Theory",
     "Method",
+    "New Context",
+    "New Construct",
+    "Practical Relevance",
     "Policy Relevance",
     "Other",
 ]
@@ -108,6 +146,8 @@ BASE_SCHEMAS: dict[str, tuple[str, dict[str, Any]]] = {
             "Field": multi_select(FIELDS),
             "PDF/Link": url(),
             "Source Path": text(),
+            "Source Folder": text(),
+            "File Hash": text(),
             "Status": select(["Inbox", "Reading", "Processed", "Error", "Archived"]),
             "Pipeline Step": select(["Intake", "Paper Card", "Taste Memo", "Ideas", "Scored", "Proposal", "Advisor Memo", "Error"]),
             "Importance": number(),
@@ -120,7 +160,7 @@ BASE_SCHEMAS: dict[str, tuple[str, dict[str, Any]]] = {
             "Method": multi_select(METHODS),
             "Contribution Type": multi_select(CONTRIBUTION_TYPES),
             "Key Contribution": text(),
-            "Formula/Model": text(),
+            "Model/Method Summary": text(),
             "Core Variables": text(),
             "Data/Setting": text(),
             "Error Message": text(),
@@ -173,7 +213,9 @@ BASE_SCHEMAS: dict[str, tuple[str, dict[str, Any]]] = {
         {
             "Proposal Title": title(),
             "Status": select(["Draft", "Critiqued", "Revised", "Sent to Advisor", "Archived"]),
-            "Target Journal Logic": select(["TAR-style", "JAR-style", "JAE-style", "RAST-style", "CAR-style"]),
+            "Target Journal Logic": select(
+                ["Top-journal style", "Field-journal style", "Seminar proposal", "TAR-style", "JAR-style", "JAE-style", "RAST-style", "CAR-style"]
+            ),
             "Main Validity Threat": text(),
             "Advisor Ready": checkbox(),
             "Created Date": created_time(),

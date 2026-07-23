@@ -63,9 +63,6 @@ def read_pdf_bytes(content: bytes) -> str:
     text = "\n\n".join(part.strip() for part in pages if part.strip())
     if not text:
         raise SystemExit("Could not extract text from this PDF. Try another PDF URL or save OCR text as .txt/.md.")
-    formula_candidates = _formula_candidates(text)
-    if formula_candidates:
-        text += "\n\n[Formula Candidates]\n" + "\n".join(f"- {line}" for line in formula_candidates)
     return text
 
 
@@ -104,8 +101,8 @@ def _best_page_text(pypdf_text: str, plumber_text: str) -> str:
         return pypdf_text
     if not pypdf_text:
         return plumber_text
-    if _formula_signal(plumber_text) >= _formula_signal(pypdf_text):
-        return plumber_text if len(plumber_text) >= len(pypdf_text) * 0.6 else pypdf_text
+    if len(plumber_text) >= len(pypdf_text) * 1.2:
+        return plumber_text
     return pypdf_text if len(pypdf_text) >= len(plumber_text) * 0.6 else plumber_text
 
 
@@ -116,48 +113,6 @@ def _table_to_text(table: list[list[str | None]]) -> str:
         if any(cells):
             rows.append(" | ".join(cells))
     return "\n".join(rows)
-
-
-def _formula_candidates(text: str) -> list[str]:
-    candidates = []
-    for raw_line in text.splitlines():
-        line = re.sub(r"\s+", " ", raw_line).strip()
-        if len(line) < 12 or len(line) > 240:
-            continue
-        if _formula_signal(line) < 2:
-            continue
-        lower = line.lower()
-        if any(skip in lower for skip in ["copyright", "http", "www.", "email", "appendix table"]):
-            continue
-        candidates.append(line)
-    return _dedupe_preserve_order(candidates)[:12]
-
-
-def _formula_signal(text: str) -> int:
-    signal = 0
-    if "=" in text or " = " in text:
-        signal += 2
-    if re.search(r"\b(reg|model|equation|estimate|where|dependent variable)\b", text, re.IGNORECASE):
-        signal += 1
-    if re.search(r"\b(beta|alpha|gamma|delta|theta|lambda|coefficient|subscript)\b|[βγαδθλ]", text, re.IGNORECASE):
-        signal += 1
-    if re.search(r"\b(i,t|it|j,t|firm|year|quarter)\b|[_{}]", text, re.IGNORECASE):
-        signal += 1
-    if re.search(r"[+\-*/×÷]", text):
-        signal += 1
-    return signal
-
-
-def _dedupe_preserve_order(values: list[str]) -> list[str]:
-    seen = set()
-    output = []
-    for value in values:
-        key = value.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        output.append(value)
-    return output
 
 
 def infer_pdf_metadata(path_or_url: str) -> dict[str, str | int | None]:

@@ -2,16 +2,16 @@ from __future__ import annotations
 
 
 SYSTEM = (
-    "You are a rigorous Accounting PhD research assistant. Be concise, structured, "
-    "skeptical about identification and contribution, and avoid motivational filler. "
+    "You are a rigorous business and social science research assistant for graduate-level paper reading "
+    "and topic development. Be concise, structured, skeptical about theory, research design, "
+    "identification or argument credibility, contribution, and feasibility. Avoid motivational filler. "
     "Write all outputs entirely in English."
 )
 
 PAPER_CARD = """Create a concise Paper Card for the paper below.
 
 Focus on the research question, setting, data, method, findings, contribution, and why this paper may be worth reading.
-When formulas, equations, variable definitions, or regression models are visible in the extracted text,
-preserve the central model in readable plain text or LaTeX-like notation.
+Do not reproduce full equations. Summarize the empirical model or method type in 1-2 concise sentences.
 
 Output in Markdown with this exact structure:
 ## Paper Card
@@ -20,7 +20,7 @@ Output in Markdown with this exact structure:
 ### Setting
 ### Data
 ### Method
-### Key Formula or Empirical Model
+### Model or Method Summary
 ### Core Variables
 ### Main Finding
 ### Contribution
@@ -30,19 +30,20 @@ Paper content:
 {content}
 """
 
-EXTRACTION_V2 = """Extract structured research mechanics from this accounting research paper.
+EXTRACTION_V2 = """Extract structured research mechanics from this business or social science research paper.
 
 Write entirely in English. Be conservative: if an item is not visible in the supplied text, say "Not clearly detected" rather than inventing it.
-Pay special attention to formulas, equations, regression models, variable definitions, contribution claims, research topics, and empirical method.
+Pay special attention to contribution claims, research topics, theory or mechanism, empirical/analytical method, identification or argument strategy, core variables/constructs, and data setting.
+Do not reproduce full equations. For the model/method field, summarize the design type, such as "event-study around announcement dates", "archival panel regression", "difference-in-differences", or "text-analysis measurement pipeline".
 
 Allowed research_topic values:
-Disclosure, Market Reaction, Earnings Quality, Auditing, Tax, Governance, Debt Contracting, Analysts, Enforcement, ESG, AI/Data, Other
+Disclosure, Market Reaction, Earnings Quality, Auditing, Tax, Governance, Debt Contracting, Analysts, Enforcement, ESG, AI/Data, Management, Strategy, Marketing, Finance, Economics, Education, Sociology, Communication, Public Policy, Psychology, Other
 
 Allowed method values:
-Archival, Difference-in-Differences, Event Study, Regression Discontinuity, Instrumental Variables, Experiment, Survey, Text Analysis, Machine Learning, Structural, Theory, Other
+Archival, Difference-in-Differences, Event Study, Regression Discontinuity, Instrumental Variables, Experiment, Survey, Interview, Case Study, Ethnography, Text Analysis, Machine Learning, Structural, Theory, Qualitative, Mixed Methods, Other
 
 Allowed contribution_type values:
-New Question, New Setting, New Data, New Measure, Identification, Mechanism, Theory, Method, Policy Relevance, Other
+New Question, New Setting, New Data, New Measure, Identification, Mechanism, Theory, Method, New Context, New Construct, Practical Relevance, Policy Relevance, Other
 
 Return strict JSON only:
 {{
@@ -50,13 +51,13 @@ Return strict JSON only:
   "method": ["Archival"],
   "contribution_type": ["Other"],
   "key_contribution": "",
-  "formula_or_model": "",
+  "model_method_summary": "",
   "core_variables": "",
   "data_setting": "",
   "identification_summary": "",
   "mechanism_summary": "",
   "classification_rationale": "",
-  "body_markdown": "## Research Mechanics\\n### Topics and Methods\\n\\n### Contribution\\n\\n### Key Formula or Empirical Model\\n\\n### Core Variables\\n\\n### Data and Setting\\n\\n### Identification\\n\\n### Mechanism\\n"
+  "body_markdown": "## Research Mechanics\\n### Topics and Methods\\n\\n### Contribution\\n\\n### Model or Method Summary\\n\\n### Core Variables\\n\\n### Data and Setting\\n\\n### Identification\\n\\n### Mechanism\\n"
 }}
 
 Paper Card:
@@ -82,7 +83,7 @@ Output Markdown with this structure:
 ## Data and Sample
 ## Identification Strategy
 ## Empirical Design
-## Key Formula or Empirical Model
+## Model or Method Summary
 ## Main Findings
 ## Strongest Part
 ## Weakest Part
@@ -95,7 +96,7 @@ Paper content:
 {content}
 """
 
-IDEAS = """Generate exactly 3 research extensions from this paper for an Accounting PhD student.
+IDEAS = """Generate exactly 3 research extensions from this paper for a business or social science graduate student.
 
 Each idea must include:
 1. Idea title
@@ -110,17 +111,18 @@ Each idea must include:
 10. Expected contribution
 11. Biggest risk
 
-Avoid vague X-affects-Y ideas. Prioritize accounting, disclosure, capital markets, auditing,
-governance, tax, and AI/data settings.
+Avoid vague X-affects-Y ideas. Prioritize feasible business and social science settings, including accounting,
+finance, management, strategy, marketing, economics, education, communication, public policy, sociology, governance,
+ESG, and AI/data settings when relevant.
 
 Return strict JSON only:
-{{"ideas":[{{"title":"","field":["Disclosure"],"research_question":"","setting":"","data_needed":"","identification":"","body_markdown":""}}]}}
+{{"ideas":[{{"title":"","field":["Business"],"research_question":"","setting":"","data_needed":"","identification":"","body_markdown":""}}]}}
 
 Source paper memo:
 {content}
 """
 
-SCORE_IDEA = """Evaluate this research idea as a top accounting journal editor and PhD advisor.
+SCORE_IDEA = """Evaluate this research idea as a demanding business/social science journal editor and graduate advisor.
 
 Score 1-5 on:
 1. Question Importance
@@ -142,7 +144,7 @@ Idea:
 {content}
 """
 
-MINI_PROPOSAL = """Turn this research idea into a concise 1-2 page Accounting PhD mini proposal.
+MINI_PROPOSAL = """Turn this research idea into a concise 1-2 page graduate research mini proposal.
 
 Use this Markdown structure:
 ## 1. Research Question
@@ -165,7 +167,7 @@ Idea:
 {content}
 """
 
-REFEREE = """Act as three referees for a top accounting journal proposal.
+REFEREE = """Act as three referees for a strong business or social science journal proposal.
 
 Referee 1 focuses on theory and contribution.
 Referee 2 focuses on identification and empirical design.

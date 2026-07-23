@@ -1,6 +1,6 @@
 # Research Taste OS
 
-Notion-first MVP workflow for improving Accounting PhD research taste.
+Notion-first MVP workflow for improving business and social science research taste.
 
 ## Current Recommended Mode: One Paper, One Page
 
@@ -102,6 +102,14 @@ For a folder of PDFs:
 research-os run-folder ./papers --limit 5
 ```
 
+For a literature library with nested topic folders, use the lightweight classifier. It recursively imports every new PDF into Paper Bank, keeps the source folder, and fills the topic/method/contribution/model-summary fields without generating idea scorecards:
+
+```bash
+research-os classify-folder "/path/to/Literature"
+```
+
+Exact duplicate PDFs are skipped by file hash, even if they appear in different subfolders. The original Paper Bank row keeps the extra source-folder label.
+
 Refresh the Notion dashboard if the page ever feels messy:
 
 ```bash
@@ -163,14 +171,24 @@ What it does automatically:
 
 - Creates the Paper Bank entry.
 - Generates the Paper Card.
-- Extracts Research Mechanics: topic, method, contribution type, key formula/model, core variables, and data setting.
+- Extracts Research Mechanics: topic, method, contribution type, model/method summary, core variables, and data setting.
 - Appends a color-coded Taste Memo.
 - Generates idea extensions inside the same paper page.
 - Scores the ideas with the 8-factor rubric.
 - Adds a `My Judgment` section for your own reading notes.
 - If any idea is `Promote`, appends Mini Proposal, Referee Simulation, and Advisor Memo sections.
 
-PDF support reads extractable text from the first 40 pages. If `pdfplumber` is installed, the extractor also uses it as an optional helper for formula/table-heavy pages; otherwise it safely falls back to `pypdf`. Scanned PDFs need OCR text first.
+`classify-folder` intentionally stops earlier:
+
+- Creates one Paper Bank page per new PDF.
+- Stores `Source Path` and `Source Folder`.
+- Stores `File Hash` so exact duplicate PDFs do not create duplicate Paper Bank rows.
+- Generates Paper Card and Research Mechanics.
+- Fills classification fields for browsing by topic, method, contribution type, model/method summary, variables, and data/setting.
+- Adds `My Judgment` prompts.
+- Skips Taste Memo, Idea Extensions, Scorecards, Mini Proposal, Referee Simulation, and Advisor Memo.
+
+PDF support reads extractable text from the first 40 pages. If `pdfplumber` is installed, the extractor also uses it as an optional helper for table-heavy pages; otherwise it safely falls back to `pypdf`. Scanned PDFs need OCR text first.
 
 If you prefer to add papers directly inside Notion, set `Status = Inbox`, then run:
 
@@ -253,7 +271,7 @@ This rebuilds `Research Taste OS - Simple` as the daily reading entry point:
 
 - A short colored guide at the top.
 - A clean Paper Bank linked view with useful daily columns.
-- Topic and Method lenses for browsing papers by research topic, empirical method, contribution type, formula/model, and data setting.
+- Topic and Method lenses for browsing papers by source folder, research topic, empirical method, contribution type, model/method summary, and data setting.
 - A Paper Page UX map explaining the color-coded sections.
 - A lightweight backfill that adds `My Judgment` to existing non-error paper pages if missing.
 
@@ -274,7 +292,7 @@ Prompt templates live in [src/research_taste_os/prompts.py](src/research_taste_o
 They cover:
 
 - Paper Card extraction
-- Research Mechanics extraction for formulas, contribution, topic tags, and method tags
+- Research Mechanics extraction for contribution, topic tags, method tags, model/method summaries, variables, and setting
 - Taste Memo drafting
 - Idea generation
 - 8-factor idea scoring

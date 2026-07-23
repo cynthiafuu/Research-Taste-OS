@@ -57,7 +57,7 @@ def main() -> None:
     run_pdf.add_argument("--relational", action="store_true", help="Use the old multi-database workflow")
     run_pdf.set_defaults(func=core.run_pdf)
 
-    run_folder = sub.add_parser("run-folder", help="Process every PDF in a folder with minimal metadata")
+    run_folder = sub.add_parser("run-folder", help="Run the full single-page pipeline for top-level PDFs in a folder")
     run_folder.add_argument("folder", help="Folder containing PDF files")
     run_folder.add_argument("--limit", type=int, default=5)
     run_folder.add_argument("--authors", default="")
@@ -66,6 +66,19 @@ def main() -> None:
     run_folder.add_argument("--importance", type=int, default=3)
     run_folder.add_argument("--target-journal-logic", default="TAR-style")
     run_folder.set_defaults(func=core.run_folder)
+
+    classify_folder = sub.add_parser(
+        "classify-folder",
+        help="Recursively classify PDFs into Paper Bank without running ideas/scoring",
+    )
+    classify_folder.add_argument("folder", help="Folder containing PDF files, including nested subfolders")
+    classify_folder.add_argument("--limit", type=int, default=0, help="Maximum new PDFs to classify; 0 means all")
+    classify_folder.add_argument("--authors", default="")
+    classify_folder.add_argument("--journal", default="WP")
+    classify_folder.add_argument("--field", action="append", default=[])
+    classify_folder.add_argument("--importance", type=int, default=3)
+    classify_folder.add_argument("--force", action="store_true", help="Re-import PDFs even when Source Path already exists")
+    classify_folder.set_defaults(func=core.classify_folder)
 
     inbox = sub.add_parser("process-inbox", help="Automatically process Paper Bank pages with Status = Inbox")
     inbox.add_argument("--limit", type=int, default=3)
